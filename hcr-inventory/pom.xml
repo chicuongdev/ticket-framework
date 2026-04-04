@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.hrc</groupId>
+        <artifactId>hcr-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>hcr-inventory</artifactId>
+    <name>HCR Framework - Inventory</name>
+    <description>
+        Module 02 - Inventory: 3 strategies to prevent overselling under concurrent load.
+        P1=PessimisticLock, P2=OptimisticLock, P3=RedisAtomic + CircuitBreaker decorator.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-core</artifactId>
+        </dependency>
+        <!-- EventBus — P3 dùng cho persistent DB sync thay vì Spring @EventListener -->
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-eventbus</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <!-- Redis (optional - only needed for P3 strategy) -->
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson-spring-boot-starter</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <!-- Circuit Breaker -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot3</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+
+</project>

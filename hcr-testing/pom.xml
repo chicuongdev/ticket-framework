@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.hrc</groupId>
+        <artifactId>hcr-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>hcr-testing</artifactId>
+    <name>HCR Framework - Testing Support</name>
+    <description>
+        Module 09 - Testing: fast unit/integration tests without real infrastructure.
+        Provides InMemoryInventory, MockPaymentGateway, InMemoryEventBus,
+        ConcurrencyTestResult, and FrameworkIntegrationTest base class.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-inventory</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-payment</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-eventbus</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+        </dependency>
+    </dependencies>
+
+</project>

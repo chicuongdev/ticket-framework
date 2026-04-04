@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.hrc</groupId>
+        <artifactId>hcr-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>hcr-autoconfigure</artifactId>
+    <name>HCR Framework - Auto Configuration</name>
+    <description>
+        Module 10 - Auto Configuration: zero boilerplate wiring via @EnableHighConcurrencyResource.
+        Conditionally creates beans based on YAML config. Exposes /actuator/hcr endpoint.
+        CorrelationIdFilter for distributed tracing propagation.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-inventory</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-eventbus</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-payment</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-saga</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-gateway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-reconciliation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-observability</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+    </dependencies>
+
+</project>

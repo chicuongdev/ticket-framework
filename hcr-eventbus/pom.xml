@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.hrc</groupId>
+        <artifactId>hcr-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>hcr-eventbus</artifactId>
+    <name>HCR Framework - Event Bus</name>
+    <description>
+        Module 05 - Event Bus: async pub/sub with 4 adapters (Kafka, RabbitMQ, Redis Streams, InMemory).
+        At-least-once delivery. EventBusCapabilities for transparent adapter switching.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-core</artifactId>
+        </dependency>
+        <!-- Kafka (optional) -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <!-- RabbitMQ (optional) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <!-- Redis Streams (optional) -->
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson-spring-boot-starter</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+
+</project>

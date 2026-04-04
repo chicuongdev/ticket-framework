@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.hrc</groupId>
+        <artifactId>hcr-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>hcr-observability</artifactId>
+    <name>HCR Framework - Observability</name>
+    <description>
+        Module 08 - Observability: auto-tracked metrics via Micrometer to Prometheus.
+        Covers all modules: inventory, saga, payment, reconciliation, event bus, gateway.
+        Pre-built Grafana dashboard included.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+
+</project>

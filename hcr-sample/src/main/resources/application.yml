@@ -1,0 +1,36 @@
+spring:
+  application:
+    name: hcr-sample
+  datasource:
+    url: jdbc:h2:mem:hcr_sample;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+hcr:
+  inventory:
+    strategy: pessimistic-lock        # P1 for sample (no Redis needed)
+    circuit-breaker:
+      enabled: false
+
+  saga:
+    mode: sync
+    reservation-timeout-minutes: 5
+
+  payment:
+    timeout-ms: 30000
+    max-retries: 3
+    polling-interval-ms: 5000
+    max-polling-attempts: 6
+
+  event-bus:
+    type: in-memory                   # in-memory for sample app
+
+  gateway:
+    rate-limiter:
+      enabled: false
+    idempotency-ttl-seconds: 86400
+
+  reconciliation:
+    schedule-delay-ms: 300000
