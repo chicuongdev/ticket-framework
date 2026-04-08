@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -1 */pom.xml)",
+      "Bash(mvn compile:*)",
+      "Bash(mvn clean:*)"
+    ]
+  }
+}

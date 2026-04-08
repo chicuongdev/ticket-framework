@@ -40,3 +40,6 @@ application-local.properties
 application-dev.properties
 # Nếu bạn để mật khẩu DB trong file này thì nên ignore
 # application.properties
+
+CLAUDE.md
+settings.local.json

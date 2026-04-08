@@ -107,11 +107,23 @@ Developer's table (EntityManager)
 - Chú ý `computeBackoff()` — exponential backoff + random jitter.
 
 **3.3** `src/main/java/io/hrc/inventory/strategy/redis/RedisAtomicStrategy.java`
-- Phức tạp nhất. 2 thay đổi quan trọng:
+- Phức tạp nhất. 3 đợt refactor:
   - **V1:** Dùng EntityManager thay vì InventoryRecordRepository.
   - **V2A:** Dùng EventBus (persistent) thay Spring Event (fire-and-forget) cho DB sync.
-- `reserve()` flow: Lua script → `eventBus.publish()` (cho DB sync) → Spring event (cho low stock notification).
+  - **V3:** Performance optimization — lo���i bỏ hoàn toàn DB khỏi critical path.
+- `reserve()` flow: Lua script → `eventBus.publish()` (cho DB sync) → `getLowStockThreshold()` từ **Redis** (không DB) → Spring event (cho low stock notification).
+- `release()`: 1 round-trip — Lua script nhận `KEYS[2]` = total key, tự đọc total bên trong.
+- `reserveBatch()`: `executePipelined()` — gộp N Lua scripts vào 1 round-trip.
 - Known limitation: gap giữa Redis DECR thành công và EventBus.publish() → Reconciliation fix ≤ 5 phút.
+
+> **V3 bottleneck analysis (2026-04-05):**
+> - **Fix 1:** `getLowStockThreshold()` trước đây gọi `entityManager.find()` mỗi request
+>   → phá vỡ nguyên tắc "DB không nằm trong critical path". Giờ đọc từ Redis key
+>   `hcr:inventory:threshold:{resourceId}`, cache khi `initialize()`.
+> - **Fix 2:** `release()` trước đây cần 2 round-trip (GET total riêng + Lua script).
+>   Giờ Lua script nhận `KEYS[2]` = total key, tự `redis.call('GET', KEYS[2])`.
+> - **Fix 3:** `reserveBatch()` trước đây gọi `reserve()` tuần tự N lần = N round-trips.
+>   Giờ dùng `redisTemplate.executePipelined()` gộp thành 1 batch.
 
 ---
 
@@ -122,7 +134,10 @@ Developer's table (EntityManager)
 - 3 return codes: `>= 0` (remaining), `-1` (chưa init), `-2` (insufficient).
 
 **4.2** `src/main/resources/lua/inventory_release.lua`
+- **Updated v3:** Nh���n `KEYS[1]` = inventory key, `KEYS[2]` = total key.
+- Tự đọc `total` bằng `redis.call('GET', KEYS[2])` bên trong script — Java không cần GET riêng.
 - Guard: sau INCRBY nếu > totalQuantity → set về totalQuantity (chống double-release).
+- Nếu total key không tồn tại → bỏ qua guard (backward-compatible).
 
 ---
 
@@ -146,12 +161,24 @@ Developer's table (EntityManager)
 - `verify()` so sánh Redis vs DB.
 
 **6.3** `src/main/java/io/hrc/inventory/persistence/InventoryPersistenceConsumer.java`
-- **Thay đổi lớn:** Dùng EventBus consumer + eventId deduplication.
+- **Mode SINGLE** (default). Mỗi event = 1 transaction.
 - Idempotency: INSERT `hcr_processed_events` + UPDATE available trong cùng 1 transaction.
   Nếu eventId trùng → DataIntegrityViolationException → skip UPDATE → ACK.
 - **Tại sao `WHERE available >= delta` KHÔNG đủ:** available=100, reserve 2, redeliver → 98 → 96 (trừ 2 lần!).
 
-**6.4** `src/main/java/io/hrc/inventory/persistence/ProcessedEvent.java`
+**6.4** `src/main/java/io/hrc/inventory/persistence/BatchInventoryPersistenceConsumer.java`
+- **Mode BATCH** (v3). Gom events cùng resourceId rồi flush 1 lần.
+- Flush triggers: buffer đạt `batchSize` (default 500) HOẶC scheduler mỗi `flushIntervalMs` (default 1s).
+- 1 batch = 1 transaction: INSERT N dedup records + UPDATE available -= totalDelta.
+- Nếu batch INSERT fail (duplicate eventId) → fallback xử lý từng event → skip duplicate, xử lý event mới.
+- `shutdown()` flush remaining buffer trước khi tắt.
+- `getPendingCount()` cho monitoring/testing.
+
+**6.5** `src/main/java/io/hrc/inventory/persistence/PersistenceMode.java` + `PersistenceConfig.java`
+- Config chọn SINGLE hay BATCH: `hcr.inventory.persistence.mode=single|batch`.
+- Batch params: `batch-size`, `flush-interval-ms`.
+
+**6.6** `src/main/java/io/hrc/inventory/persistence/ProcessedEvent.java`
 - Entity cho bảng `hcr_processed_events` — chỉ lưu eventId + eventType + processedAt.
 
 ---
@@ -166,3 +193,5 @@ Developer's table (EntityManager)
 6. **P3 dùng EventBus** (persistent) cho DB sync, KHÔNG dùng Spring @EventListener (fire-and-forget).
 7. **Idempotency thật sự qua eventId** (bảng `hcr_processed_events`), không phải `WHERE available >= delta`.
 8. **CB `release()` không reject khi OPEN** — để tránh inventory leak.
+9. **P3 critical path = zero DB hit (v3)** — `reserve()` chỉ gọi Redis (Lua + threshold GET). DB chỉ được access async qua EventBus consumer.
+10. **P3 Redis key layout (v3):** `hcr:inventory:{id}` (available), `hcr:inventory:total:{id}` (total), `hcr:inventory:threshold:{id}` (lowStockThreshold — cached khi `initialize()`).

@@ -1,6 +1,6 @@
 # HCR Framework — Tiến độ & Kế hoạch
 
-> **Cập nhật lần cuối:** 2026-04-04
+> **Cập nhật lần cuối:** 2026-04-05
 >
 > File này dùng để resume context nhanh giữa các session.
 > Đọc file này TRƯỚC khi bắt đầu làm việc.
@@ -53,7 +53,7 @@
 
 ---
 
-### ✅ Module 02 — hcr-inventory (HOÀN THÀNH — Refactored v2)
+### ✅ Module 02 — hcr-inventory (HOÀN THÀNH — Refactored v3)
 
 **Mục đích:** Giải quyết oversell — 3 strategy với mức độ throughput và consistency khác nhau.
 **Dependency:** `hcr-core`, `hcr-eventbus`.
@@ -73,6 +73,32 @@
 - Lý do: `WHERE available >= delta` chỉ tránh trừ âm, KHÔNG tránh trừ 2 lần (available=100, reserve 2, redeliver → 98 → 96).
 - Known limitation: gap Redis DECR ↔ EventBus.publish() → Reconciliation fix ≤ 5 phút.
 
+**V3 — P3 bottleneck optimization (2026-04-05) — 3 fix loại bỏ DB khỏi critical path:**
+
+**V3-Fix1 — `getLowStockThreshold()` đọc từ Redis thay vì DB:**
+- **Trước:** Mỗi `reserve()` gọi `entityManager.find()` để đọc `lowStockThreshold` → 10,000 SELECT/s vô nghĩa.
+- **Sau:** Cache threshold vào Redis key `hcr:inventory:threshold:{resourceId}` khi `initialize()`. `getLowStockThreshold()` đọc từ Redis.
+- **Impact:** Loại bỏ hoàn toàn DB khỏi critical path — đúng với nguyên tắc thiết kế P3.
+
+**V3-Fix2 — `release()` giảm từ 2 round-trip xuống 1:**
+- **Trước:** Java GET `totalKey` (round-trip 1) → Lua script (round-trip 2).
+- **Sau:** Lua script nhận `KEYS[2]` = total key, tự đọc `redis.call('GET', KEYS[2])` bên trong.
+- **Impact:** Mỗi release giảm 1 network round-trip (~0.1-0.5ms mỗi request).
+
+**V3-Fix3 — `reserveBatch()` dùng Redis pipeline:**
+- **Trước:** N items = N round-trip tuần tự (mỗi call `reserve()` riêng lẻ).
+- **Sau:** `redisTemplate.executePipelined()` gộp N Lua script thành 1 batch, xử lý kết quả + publish events sau.
+- **Impact:** Batch 100 items: 100 round-trips → 1 round-trip.
+
+**V3-Fix4 — Batch DB sync consumer (configurable):**
+- **Trước:** Mỗi event = 1 transaction (INSERT dedup + UPDATE available). 10,000 req/s = 10,000 tx/s.
+- **Sau:** Thêm `BatchInventoryPersistenceConsumer` — gom events cùng resourceId rồi flush 1 lần.
+  VD: 1,000 reserve cùng resourceId → 1 transaction (1 UPDATE + 1,000 INSERT dedup).
+- **Chọn mode qua config:** `hcr.inventory.persistence.mode=single|batch`. Default: `single`.
+- **Batch config:** `batch-size` (default 500), `flush-interval-ms` (default 1000ms).
+- **Fallback:** Nếu batch INSERT fail do duplicate eventId → tự fallback xử lý từng event.
+- **Impact:** Giảm ~90-99% số transaction khi tải cao. Trade-off: DB lag tăng thêm ≤ flushIntervalMs.
+
 **Các file đã implement:**
 
 | File | Ghi chú |
@@ -81,15 +107,18 @@
 | `entity/AbstractInventoryEntity.java` | **MỚI.** `@MappedSuperclass`. Fields: resourceId, available, total, version, lowStockThreshold, updatedAt. Developer extend + thêm field riêng. |
 | `strategy/pessimistic/PessimisticLockStrategy.java` | **Refactored.** `entityManager.find(entityClass, id, PESSIMISTIC_WRITE)`. `reserveBatch()` sort keys alphabet → chống deadlock. |
 | `strategy/optimistic/OptimisticLockStrategy.java` | **Refactored.** EntityManager + `flush()` trigger version check sớm. Retry loop + exponential backoff + jitter. |
-| `strategy/redis/RedisAtomicStrategy.java` | **Refactored.** Lua script. `eventBus.publish()` cho DB sync. Spring event cho low stock/depleted notification. |
+| `strategy/redis/RedisAtomicStrategy.java` | **Refactored v3.** Lua script. `eventBus.publish()` cho DB sync. Spring event cho low stock/depleted notification. **V3:** `getLowStockThreshold()` đọc từ Redis (không DB). `release()` 1 round-trip. `reserveBatch()` dùng pipeline. |
 | `lua/inventory_reserve.lua` | Atomic GET + DECRBY. 3 return codes. |
-| `lua/inventory_release.lua` | INCRBY + guard không vượt totalQuantity (chống double-release). |
+| `lua/inventory_release.lua` | **Updated v3.** INCRBY + guard không vượt totalQuantity. Nhận `KEYS[2]` = total key → tự đọc total bên trong Lua (giảm 1 round-trip). |
 | `decorator/CircuitBreakerState.java` | CLOSED, OPEN, HALF_OPEN. |
 | `decorator/CircuitBreakerInventoryDecorator.java` | Decorator Pattern. `release()` không reject khi OPEN (tránh inventory leak). |
 | `metrics/InventoryMetrics.java` | Interface 8 methods + `NO_OP` inner class. |
 | `factory/InventoryStrategyFactory.java` | **Refactored.** Nhận EntityManager + entityClass. P3 yêu cầu EventBus bean. |
 | `initializer/InventoryInitializer.java` | **Refactored.** JPQL generic: `"SELECT e FROM " + entityClass.getSimpleName()`. |
-| `persistence/InventoryPersistenceConsumer.java` | **Refactored.** EventBus consumer + eventId dedup (hcr_processed_events). |
+| `persistence/InventoryPersistenceConsumer.java` | **Refactored.** EventBus consumer + eventId dedup (hcr_processed_events). Mode: SINGLE — 1 event = 1 transaction. |
+| `persistence/BatchInventoryPersistenceConsumer.java` | **MỚI (v3).** Mode: BATCH — gom events theo resourceId, flush theo batchSize hoặc interval. Fallback sang single khi duplicate. |
+| `persistence/PersistenceMode.java` | **MỚI (v3).** Enum: SINGLE / BATCH. |
+| `persistence/PersistenceConfig.java` | **MỚI (v3).** Config: mode, batchSize (default 500), flushIntervalMs (default 1000ms). |
 | `persistence/ProcessedEvent.java` | **MỚI.** Entity cho bảng `hcr_processed_events`. Lưu eventId + eventType + processedAt. |
 | `persistence/ProcessedEventRepository.java` | **MỚI.** JPA repository cho ProcessedEvent. |
 | `event/Resource*Event.java` | 5 events: Reserved, Released, Depleted, LowStock, Restocked. Extend `DomainEvent`. Reserved/Released publish qua EventBus (P3), còn lại Spring internal. |
@@ -298,3 +327,7 @@ hcr-core ──► hcr-payment   ──► (done)
 | **EventBus cho P3 DB sync (v2)** | Spring `@EventListener` là in-memory fire-and-forget — crash trước khi consumer xử lý → event mất vĩnh viễn. EventBus (Kafka/RabbitMQ) persistent message, auto-redeliver. |
 | **eventId dedup thay vì WHERE available >= delta (v2)** | `WHERE available >= delta` chỉ tránh trừ âm, KHÔNG tránh trừ 2 lần. Idempotency thật sự cần check eventId qua bảng `hcr_processed_events`. |
 | **Gap Redis DECR ↔ EventBus.publish() (v2)** | Known limitation — nếu crash ở giữa, Reconciliation fix ≤ 5 phút. Chấp nhận trong scope này. |
+| **P3 lowStockThreshold cache trong Redis (v3)** | `getLowStockThreshold()` trước đây query DB mỗi request → phá vỡ nguyên tắc "DB không nằm trong critical path". Giờ cache vào `hcr:inventory:threshold:{resourceId}` khi `initialize()`. |
+| **P3 release Lua script tự đọc total (v3)** | Trước: Java GET total riêng (round-trip 1) rồi truyền vào Lua (round-trip 2). Giờ Lua nhận `KEYS[2]` = total key, tự `redis.call('GET', KEYS[2])`. Giảm 1 round-trip. |
+| **P3 reserveBatch dùng pipeline (v3)** | Trước: N items = N round-trip tuần tự. Giờ `executePipelined()` gộp thành 1 batch. |
+| **P3 batch DB sync configurable (v3)** | SINGLE mode giữ nguyên cho backward-compat + low-traffic use case. BATCH mode cho high-traffic: gom events theo resourceId, flush theo batchSize hoặc interval. Fallback sang single khi duplicate. ACK ngay khi buffer (không chờ flush) — chấp nh���n data loss nếu crash giữa ACK và flush, Reconciliation sẽ fix. |

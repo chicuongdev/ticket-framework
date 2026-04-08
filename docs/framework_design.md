@@ -584,23 +584,36 @@ public class OptimisticLockStrategy implements InventoryStrategy {
 Lua script DECR atomic trên Redis + async persistence qua Event Bus.
 Loại bỏ DB khỏi critical path. Phù hợp với tải rất cao.
 
+> **Revision 3 — Performance optimization (2026-04-05):**
+> - `getLowStockThreshold()` đọc từ Redis key `hcr:inventory:threshold:{resourceId}`
+>   thay vì `entityManager.find()` — loại bỏ hoàn toàn DB khỏi critical path.
+> - `release()` giảm từ 2 round-trip xuống 1 — Lua script tự đọc `total` từ `KEYS[2]`.
+> - `reserveBatch()` dùng `executePipelined()` — N items trong 1 round-trip thay vì N.
+
 ```java
 public class RedisAtomicStrategy implements InventoryStrategy {
 
-    private final RedisTemplate<String, Long> redisTemplate;
+    private final StringRedisTemplate redisTemplate;
     private final EventBus eventBus;
     private final InventoryMetrics metrics;
-    private final String keyPrefix;     // default: "hcr:inventory:"
 
-    // Core Lua script (atomic):
-    // local current = redis.call('GET', key)
-    // if current == false then return -1 end   -- key không tồn tại
-    // if tonumber(current) < quantity then return 0 end  -- hết hàng
-    // redis.call('DECRBY', key, quantity)
-    // return 1   -- thành công
+    // Redis key layout:
+    //   hcr:inventory:{resourceId}           — available quantity (source of truth)
+    //   hcr:inventory:total:{resourceId}     — total quantity
+    //   hcr:inventory:threshold:{resourceId} — lowStockThreshold (cached from DB)
 
-    // Startup: load available từ DB lên Redis
-    // Async: publish ResourceReservedEvent → consumer persist xuống DB
+    // reserve() critical path (zero DB hit):
+    //   1. Lua script: GET + check + DECRBY (atomic, <1ms)
+    //   2. eventBus.publish(ResourceReservedEvent) — persistent, async DB sync
+    //   3. getLowStockThreshold() → Redis GET (NOT DB query)
+    //   4. Spring event cho low stock / depleted notification
+
+    // release() — 1 round-trip:
+    //   Lua script nhận KEYS[1]=inventory key, KEYS[2]=total key
+    //   → tự đọc total bên trong, không cần Java GET riêng
+
+    // reserveBatch() — 1 round-trip cho N items:
+    //   executePipelined() gộp N Lua script thành 1 batch
 
     @Override
     public String getStrategyName() { return "redis-atomic"; }
@@ -655,6 +668,74 @@ public class InventoryStrategyFactory {
     public void registerCustomStrategy(String name, InventoryStrategy strategy)
 }
 ```
+
+---
+
+#### `PersistenceConfig` + `PersistenceMode` *(class + enum — Revision 3)*
+
+Cấu hình DB sync consumer cho P3. Chọn SINGLE hoặc BATCH mode.
+
+```yaml
+hcr:
+  inventory:
+    persistence:
+      mode: batch              # single (default) | batch
+      batch-size: 500          # flush khi buffer đạt N events
+      flush-interval-ms: 1000  # flush theo interval dù chưa đủ batch-size
+```
+
+```java
+public enum PersistenceMode { SINGLE, BATCH }
+
+public class PersistenceConfig {
+    private PersistenceMode mode;      // default: SINGLE
+    private int batchSize;             // default: 500
+    private long flushIntervalMs;      // default: 1000
+}
+```
+
+---
+
+#### `BatchInventoryPersistenceConsumer` *(class — Revision 3)*
+
+Batch alternative cho `InventoryPersistenceConsumer`. Gom events cùng
+resourceId rồi flush 1 transaction thay vì N transactions.
+
+```java
+public class BatchInventoryPersistenceConsumer {
+
+    // EventHandler factories — tương tự InventoryPersistenceConsumer
+    public EventHandler<ResourceReservedEvent> reservedHandler()
+    public EventHandler<ResourceReleasedEvent> releasedHandler()
+
+    // Flush triggers:
+    //   1. Buffer đạt batchSize → flush resourceId đó
+    //   2. Scheduler mỗi flushIntervalMs → flush ALL
+
+    // 1 batch = 1 transaction:
+    //   INSERT N rows hcr_processed_events (dedup)
+    //   UPDATE available = available + totalDelta WHERE resource_id = ?
+
+    // Nếu batch INSERT fail (duplicate eventId):
+    //   → fallback từng event → skip duplicate, xử lý event mới
+
+    // Graceful shutdown: flush remaining buffer
+    public void shutdown()
+
+    // Monitoring
+    public int getPendingCount()
+    public int getPendingCount(String resourceId)
+}
+```
+
+**So sánh SINGLE vs BATCH:**
+
+| | SINGLE | BATCH |
+|--|--------|-------|
+| Transactions/s | = số events/s | ÷ batchSize (vd: 10,000 → ~20) |
+| DB lag thêm | 0 | ≤ flushIntervalMs |
+| Complexity | Đơn giản | Buffer + scheduler + fallback |
+| Khi nào dùng | Tải ≤ 5,000 req/s | Tải > 5,000 req/s |
 
 ---
 

@@ -22,6 +22,7 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.scripting.support.ResourceScriptSource;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +52,7 @@ public class RedisAtomicStrategy implements InventoryStrategy {
     private static final String STRATEGY_NAME = "redis-atomic";
     private static final String KEY_PREFIX = "hcr:inventory:";
     private static final String TOTAL_KEY_PREFIX = "hcr:inventory:total:";
+    private static final String THRESHOLD_KEY_PREFIX = "hcr:inventory:threshold:";
 
     private static final long LUA_KEY_NOT_INITIALIZED = -1L;
     private static final long LUA_INSUFFICIENT = -2L;
@@ -139,11 +141,9 @@ public class RedisAtomicStrategy implements InventoryStrategy {
         String key = KEY_PREFIX + resourceId;
         String totalKey = TOTAL_KEY_PREFIX + resourceId;
 
-        String totalStr = redisTemplate.opsForValue().get(totalKey);
-        long total = totalStr != null ? Long.parseLong(totalStr) : Long.MAX_VALUE;
-
+        // 1 round-trip: Lua script đọc total trực tiếp từ KEYS[2]
         Long result = redisTemplate.execute(releaseScript,
-            List.of(key), String.valueOf(quantity), String.valueOf(total));
+            List.of(key, totalKey), String.valueOf(quantity));
 
         if (result == null || result == LUA_KEY_NOT_INITIALIZED) {
             log.error("[P3] Release failed — Redis key not initialized: {}", resourceId);
@@ -222,6 +222,13 @@ public class RedisAtomicStrategy implements InventoryStrategy {
                 AbstractInventoryEntity entity = entityClass.getDeclaredConstructor(
                     String.class, long.class).newInstance(resourceId, totalQuantity);
                 entityManager.persist(entity);
+
+                // Cache lowStockThreshold vào Redis — tránh DB query trên critical path
+                long threshold = entity.getLowStockThreshold();
+                if (threshold > 0) {
+                    redisTemplate.opsForValue().set(
+                        THRESHOLD_KEY_PREFIX + resourceId, String.valueOf(threshold));
+                }
             } catch (ReflectiveOperationException e) {
                 throw new IllegalStateException(
                     "Entity class " + entityClass.getSimpleName() +
@@ -259,8 +266,59 @@ public class RedisAtomicStrategy implements InventoryStrategy {
     @Override
     public Map<String, ReservationResult> reserveBatch(Map<String, Integer> requests) {
         Map<String, ReservationResult> results = new HashMap<>();
-        requests.forEach((resourceId, qty) ->
-            results.put(resourceId, reserve(resourceId, "batch", qty)));
+
+        // Phase 1: Pipeline tất cả Lua script reserve vào 1 round-trip
+        List<String> orderedKeys = new ArrayList<>(requests.keySet());
+        List<Object> pipelineResults = redisTemplate.executePipelined((org.springframework.data.redis.core.RedisCallback<Object>) connection -> {
+            for (String resourceId : orderedKeys) {
+                int qty = requests.get(resourceId);
+                String key = KEY_PREFIX + resourceId;
+                redisTemplate.execute(reserveScript, List.of(key), String.valueOf(qty));
+            }
+            return null;
+        });
+
+        // Phase 2: Xử lý kết quả + publish events
+        for (int i = 0; i < orderedKeys.size(); i++) {
+            String resourceId = orderedKeys.get(i);
+            int quantity = requests.get(resourceId);
+            Long luaResult = (Long) pipelineResults.get(i);
+
+            if (luaResult == null || luaResult == LUA_KEY_NOT_INITIALIZED) {
+                results.put(resourceId, ReservationResult.error(resourceId, quantity,
+                    "Redis key chưa được khởi tạo: " + resourceId));
+                continue;
+            }
+
+            if (luaResult == LUA_INSUFFICIENT) {
+                metrics.recordReserveFailure(resourceId, STRATEGY_NAME, FailureReason.INSUFFICIENT_INVENTORY);
+                metrics.recordOversellPrevented(resourceId);
+                results.put(resourceId, ReservationResult.insufficient(resourceId, quantity));
+                continue;
+            }
+
+            long remaining = luaResult;
+
+            eventBus.publish(new ResourceReservedEvent(
+                resourceId, null, "batch", quantity, remaining, "batch"));
+
+            if (remaining == 0) {
+                metrics.recordDepleted(resourceId);
+                eventPublisher.publishEvent(new ResourceDepletedEvent(resourceId, "batch"));
+            } else {
+                long threshold = getLowStockThreshold(resourceId);
+                if (threshold > 0 && remaining <= threshold) {
+                    metrics.recordLowStock(resourceId);
+                    eventPublisher.publishEvent(
+                        new ResourceLowStockEvent(resourceId, remaining, threshold, "batch"));
+                }
+            }
+
+            metrics.recordReserveSuccess(resourceId, STRATEGY_NAME, 0);
+            metrics.updateAvailableGauge(resourceId, remaining);
+            results.put(resourceId, ReservationResult.success(resourceId, quantity, remaining));
+        }
+
         return results;
     }
 
@@ -305,7 +363,7 @@ public class RedisAtomicStrategy implements InventoryStrategy {
     }
 
     private long getLowStockThreshold(String resourceId) {
-        AbstractInventoryEntity entity = entityManager.find(entityClass, resourceId);
-        return entity != null ? entity.getLowStockThreshold() : 0L;
+        String val = redisTemplate.opsForValue().get(THRESHOLD_KEY_PREFIX + resourceId);
+        return val != null ? Long.parseLong(val) : 0L;
     }
 }
