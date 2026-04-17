@@ -26,6 +26,12 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
+        <!-- JPA API — chỉ dùng annotations (@MappedSuperclass, @Id...). Optional vì không phải module nào cũng cần JPA. -->
+        <dependency>
+            <groupId>jakarta.persistence</groupId>
+            <artifactId>jakarta.persistence-api</artifactId>
+            <optional>true</optional>
+        </dependency>
     </dependencies>
 
 </project>

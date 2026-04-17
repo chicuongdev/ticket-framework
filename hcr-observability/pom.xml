@@ -24,6 +24,14 @@
             <artifactId>hcr-core</artifactId>
         </dependency>
         <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-inventory</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-reconciliation</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>

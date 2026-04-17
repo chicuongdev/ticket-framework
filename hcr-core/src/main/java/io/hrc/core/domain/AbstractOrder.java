@@ -2,6 +2,7 @@ package io.hrc.core.domain;
 
 import io.hrc.core.enums.FailureReason;
 import io.hrc.core.enums.OrderStatus;
+import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -27,24 +28,32 @@ import java.time.Instant;
  * }
  * }</pre>
  */
+@MappedSuperclass
 @Getter
 @Setter
 @NoArgsConstructor
 public abstract class AbstractOrder {
 
     /** Định danh duy nhất của order (UUID). */
+    @Id
+    @Column(name = "order_id", nullable = false, length = 64)
     private String orderId;
 
     /** ID tài nguyên được đặt — liên kết với AbstractResource.resourceId. */
+    @Column(name = "resource_id", nullable = false, length = 128)
     private String resourceId;
 
     /** ID người đặt (userId, customerId...). */
+    @Column(name = "requester_id", nullable = false, length = 128)
     private String requesterId;
 
     /** Số lượng đặt trong order này. */
+    @Column(name = "quantity", nullable = false)
     private int quantity;
 
     /** Trạng thái hiện tại của order. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 32)
     private OrderStatus status;
 
     /**
@@ -52,18 +61,23 @@ public abstract class AbstractOrder {
      * Framework dùng field này để detect và reject request trùng lặp.
      * Developer cần đảm bảo client gửi cùng key cho cùng 1 ý định đặt hàng.
      */
+    @Column(name = "idempotency_key", nullable = false, length = 128)
     private String idempotencyKey;
 
     /**
      * Lý do thất bại chuẩn hóa (nếu có).
      * Được set khi status chuyển sang CANCELLED hoặc EXPIRED.
      */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "failure_reason", length = 64)
     private FailureReason failureReason;
 
     /** Thời điểm tạo order. */
+    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     /** Thời điểm cập nhật gần nhất. */
+    @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
     /**
@@ -71,6 +85,7 @@ public abstract class AbstractOrder {
      * Sau thời điểm này, Reconciliation sẽ tự cancel order và release inventory.
      * Mặc định: createdAt + hcr.saga.reservation-timeout-minutes (default 5 phút).
      */
+    @Column(name = "expires_at")
     private Instant expiresAt;
 
     protected AbstractOrder(String orderId, String resourceId, String requesterId,

@@ -7,6 +7,10 @@ spring:
   jpa:
     hibernate:
       ddl-auto: create-drop
+    defer-datasource-initialization: true   # chạy data.sql sau khi Hibernate tạo schema
+  sql:
+    init:
+      mode: always
 
 hcr:
   inventory:
@@ -34,3 +38,12 @@ hcr:
 
   reconciliation:
     schedule-delay-ms: 300000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus, hcr
+  metrics:
+    tags:
+      application: hcr-sample

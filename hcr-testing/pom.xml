@@ -36,6 +36,10 @@
             <artifactId>hcr-eventbus</artifactId>
         </dependency>
         <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-saga</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
         </dependency>

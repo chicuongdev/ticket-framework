@@ -1,6 +1,6 @@
 # HCR Framework — Tiến độ & Kế hoạch
 
-> **Cập nhật lần cuối:** 2026-04-05
+> **Cập nhật lần cuối:** 2026-04-17
 >
 > File này dùng để resume context nhanh giữa các session.
 > Đọc file này TRƯỚC khi bắt đầu làm việc.
@@ -220,96 +220,169 @@ hcr-core ──► hcr-payment   ──► (done)
 
 ---
 
-### 🔲 Module 03 — hcr-saga (TIẾP THEO)
+### ✅ Module 03 — hcr-saga (HOÀN THÀNH)
 
-**Dependency:** `hcr-core`, `hcr-inventory`, `hcr-payment`, `hcr-eventbus` (tất cả đã hoàn thành).
+**Dependency:** `hcr-core`, `hcr-inventory`, `hcr-payment`, `hcr-eventbus`.
 
-**Thành phần cần implement:**
-- `SagaOrchestrator` — interface chung
-- `SyncSagaOrchestrator` — xử lý trong 1 request thread
-- `AsyncSagaOrchestrator` — publish event → consumer xử lý
-- `SagaStateRepository` — bắt buộc khi dùng async mode
-- Steps: `ReserveStep`, `PaymentStep`, `ConfirmStep`, `CompensationStep`
-- `SagaContext` — chứa state xuyên suốt 1 saga execution
-- `GUIDE.md`
+**Các file đã implement:**
+
+| File | Ghi chú |
+|------|---------|
+| `step/StepResult.java` | 3 trạng thái: SUCCESS, FAILED, RETRY. Factory methods. |
+| `step/SagaStep.java` | Interface: execute(), compensate(), getStepName(), isRetryable(). |
+| `step/ReservationStep.java` | execute: inventoryStrategy.reserve(). compensate: release(). Không retryable. |
+| `step/PaymentStep.java` | execute: paymentGateway.charge(). compensate: refund() chỉ khi SUCCESS. |
+| `step/ConfirmationStep.java` | execute: eventBus.publish(OrderConfirmedEvent). compensate: no-op. |
+| `context/SagaContext.java` | Mang state giữa các bước. Serializable cho async mode. completedSteps, paymentResult, reservationResult, metadata. |
+| `repository/SagaStateRepository.java` | Interface: save(), findByOrderId(), delete(), findByStatus(). BẮT BUỘC cho async mode. |
+| `orchestrator/AbstractSagaOrchestrator.java` | Template Method. process() final. Developer implement: createOrder, findOrder, saveOrder, buildPaymentRequest, onConfirmed, onCancelled. |
+| `orchestrator/sync/SynchronousSagaOrchestrator.java` | P1/P2: Reserve(DB) → Payment → Confirm → HTTP 201. |
+| `orchestrator/async/AsynchronousSagaOrchestrator.java` | P3: Reserve(Redis) → Publish event → HTTP 202. handlePaymentResult() gọi bởi consumer. |
+
+**GUIDE.md:** `hcr-saga/GUIDE.md` ✅
 
 ---
 
-### 🔲 Module 06 — hcr-gateway
+### ✅ Module 06 — hcr-gateway (HOÀN THÀNH — 2026-04-13)
 
 **Dependency:** `hcr-core`, `hcr-saga`.
 
-**Thành phần cần implement:**
-- `ResourceOrderController` — entry point HTTP
-- `IdempotencyHandler` — check duplicate request
-- `RateLimiter` + `RedisTokenBucketRateLimiter`
-- `CorrelationIdFilter` — inject correlationId vào MDC
-- `GUIDE.md`
+**Các file đã implement:**
+
+| File | Ghi chú |
+|------|---------|
+| `FrameworkGateway.java` | Abstract class. Pipeline final: Validate → Idempotency → RateLimit → CB → Saga → Cache. Developer implement: `validateBusinessRules()`. Override tùy chọn: `shouldRateLimit()`, `getRateLimitKey()`, `getIdempotencyKey()`, `isCircuitBreakerOpen()`. |
+| `AbstractRequestValidator.java` | Standalone validator. 2-layer: basic fields (framework) + business rules (developer). `validate()` là `final`. |
+| `ratelimit/RateLimiter.java` | Interface: `tryAcquire(key)`, `tryAcquire(key, permits)`, `tryAcquireWithInfo(key)`, `configure(key, rps, burst)`. |
+| `ratelimit/RateLimitResult.java` | Result object. Fields: `allowed`, `remainingPermits`, `resetAfterMs`, `limitPerSecond`. Factory: `allowed(...)` / `denied(...)`. |
+| `ratelimit/RateLimitExceededException.java` | Extends RuntimeException (không phải FrameworkException). Mang `RateLimitResult` để set HTTP headers. → HTTP 429. |
+| `ratelimit/redis/RedisTokenBucketRateLimiter.java` | Token Bucket trên Redis. Lua script atomic. Per-key config via `ConcurrentHashMap`. Fail open khi Redis lỗi. |
+| `idempotency/IdempotencyHandler.java` | Interface: `isDuplicate()`, `markProcessed()`, `getCachedResult()`, `expire()`. |
+| `idempotency/redis/RedisIdempotencyHandler.java` | Redis SET/EXPIRE/EXISTS/GET. TTL default 24h. Value = `result.toString()` (thường là orderId). |
+| `filter/CorrelationIdFilter.java` | `OncePerRequestFilter`. Lấy/sinh correlationId → MDC → response header. PHẢI remove MDC sau request (tránh thread pool leak). |
+| `lua/rate_limit_token_bucket.lua` | Token bucket algorithm. Lua atomic: GET + refill + SET = 1 operation. Return: `{allowed, remaining, resetAfterMs, limitPerSecond}`. TTL tự động = thời gian refill đầy bucket. |
+
+**Thiết kế quan trọng:**
+- **Circuit Breaker**: `FrameworkGateway` không import `CircuitBreakerInventoryDecorator` trực tiếp. Developer override `isCircuitBreakerOpen()` để wire — loose coupling.
+- **Rate Limiter = null**: Gateway hoạt động bình thường, chỉ skip bước rate limit. Tắt hoàn toàn qua constructor 2-param.
+- **Idempotency lưu orderId**: `markProcessed(key, order.getOrderId())` — client retry nhận `IdempotencyException` kèm key để biết đã xử lý.
+- **Fail open**: Redis rate limiter lỗi → allow request (log warning) — tránh block traffic vì rate limiter down.
+
+**GUIDE.md:** `hcr-gateway/GUIDE.md` ✅
 
 ---
 
-### 🔲 Module 07 — hcr-reconciliation
+### ✅ Module 07 — hcr-reconciliation (HOÀN THÀNH — 2026-04-14)
 
-**Dependency:** `hcr-core`, `hcr-inventory`, `hcr-eventbus`.
+**Dependency:** `hcr-core`, `hcr-inventory`, `hcr-payment`, `hcr-eventbus`.
 
-**Thành phần cần implement:**
-- `ReconciliationService` — scheduler chạy định kỳ
-- `InventoryReconciler` — so sánh Redis vs DB (P3 only), tự fix mismatch
-- `ExpiredOrderReconciler` — tìm order quá `expiresAt`, cancel + release
-- `GUIDE.md`
+**Các file đã implement:**
 
----
+| File | Ghi chú |
+|------|---------|
+| `ReconciliationCase.java` | Enum 5 case: STALE_PENDING, LATE_PAYMENT_SUCCESS, INVENTORY_MISMATCH, UNPERSISTED_RESERVATION, DUPLICATE_ORDER. |
+| `ReconciliationMetrics.java` | Interface 3 methods + `NO_OP`. Được implement bởi hcr-observability sau. |
+| `model/ReconciliationResult.java` | @Builder. Fields: totalScanned, totalFixed, totalFailed, fixedByCase (EnumMap), errors, duration, runAt. `hasErrors()`, `getSuccessRate()`. |
+| `model/InventoryDelta.java` | So sánh Redis vs DB. Factory `of(resourceId, redis, db)`. Quy ước dấu delta: dương = Redis cao hơn (cần fix), âm = DB lag bình thường. `isRedisHigherThanDb()`, `isDbHigherThanRedis()`. |
+| `model/PaymentVerificationResult.java` | Wrap kết quả queryStatus(). `isPaymentSuccess()` → Case 2, `isPaymentFailed()` → Case 1, `isPaymentUnresolvable()` → cancel + alert. |
+| `inventory/InventoryReconciler.java` | Case 3: compare Redis vs DB bằng StringRedisTemplate + EntityManager. autoFix: SET Redis key về giá trị DB nếu delta > 0 và delta <= threshold. Publish InventoryMismatchEvent + ReconciliationFixedEvent. |
+| `order/OrderReconciler.java` | Case 1+2: verify stale orders bằng paymentGateway.queryStatus(). Exception từ gateway → verified=false, không throw. Chỉ verify, không xử lý. |
+| `AbstractReconciliationService.java` | Template Method. `runReconciliation()` final + @Scheduled. Distributed lock (Redisson tryLock). 4 case runners (try/catch độc lập). 9 abstract methods + 4 config overrides. 2 constructors (đầy đủ cho P3, rút gọn cho P1/P2). |
 
-### 🔲 Module 08 — hcr-observability
+**GUIDE.md:** `hcr-reconciliation/GUIDE.md` ✅
 
-**Dependency:** `hcr-core` (+ optional Micrometer).
-
-**Thành phần cần implement:**
-- `FrameworkMetrics` — interface tổng hợp metrics
-- `MicrometerFrameworkMetrics` — implementation dùng Micrometer
-- `NoOpFrameworkMetrics` — default khi không có Micrometer
-- `GUIDE.md`
-
----
-
-### 🔲 Module 09 — hcr-testing
-
-**Dependency:** hầu hết các module.
-
-**Thành phần cần implement:**
-- `HcrTestBuilder` — fluent builder cho test setup
-- `AbstractIntegrationTest` — base class với InMemory infrastructure sẵn
-- `FrameworkTestSupport` — helper methods
-- `GUIDE.md`
+**Thiết kế quan trọng:**
+- **InventoryReconciler dùng StringRedisTemplate trực tiếp** (không qua strategy) để đọc raw Redis value cho compare.
+- **autoFix chỉ khi delta > 0** (Redis cao hơn DB): fix Redis → DB. delta < 0 = DB lag bình thường, không touch.
+- **mismatchThreshold default = 0** = alert only, không auto-fix. Developer tự nâng lên khi cần.
+- **InventoryReconciler là @Nullable**: P1/P2 truyền null → skip Case 3 hoàn toàn.
+- **Distributed lock tryLock không chờ**: nếu instance khác đang chạy → skip, không block.
+- **Case runners độc lập**: lỗi Case 3 không dừng Case 4+5.
 
 ---
 
-### 🔲 Module 10 — hcr-autoconfigure
+### ✅ Module 08 — hcr-observability (HOÀN THÀNH — 2026-04-15)
+
+**Dependency:** `hcr-core`, `hcr-inventory`, `hcr-reconciliation` (+ optional Micrometer).
+
+**Các file đã implement:**
+
+| File | Ghi chú |
+|------|---------|
+| `FrameworkMetrics.java` | Interface tổng hợp 27 methods. **Extends** `InventoryMetrics` (hcr-inventory) + `ReconciliationMetrics` (hcr-reconciliation). Thêm 4 nhóm mới: Saga (4), Payment (5), EventBus (3), Gateway (4). Inner class `NoOp` implement toàn bộ. |
+| `micrometer/MicrometerFrameworkMetrics.java` | Micrometer implementation. Counter/Timer/Gauge/DistributionSummary. Gauge pattern: `ConcurrentHashMap<resourceId, AtomicLong>` — đăng ký 1 lần, update nhiều lần. Auto-export sang Prometheus. |
+| `metrics/*MetricsCollector.java` | 6 class tài liệu (không có logic). Liệt kê metric name + tag theo từng domain để developer biết query gì trong Prometheus. |
+| `grafana/hcr-dashboard.json` | Grafana dashboard template. 14 panel: throughput, P50/P95/P99 latency, inventory available gauge, oversell prevented, saga outcome rate, payment success rate, reconciliation fixed by case, event bus rate. |
+
+**GUIDE.md:** `hcr-observability/GUIDE.md` ✅
+
+**Thiết kế quan trọng:**
+- **`FrameworkMetrics extends InventoryMetrics + ReconciliationMetrics`**: 1 bean `MicrometerFrameworkMetrics` inject được vào tất cả nơi cần metrics — inventory strategy factory, reconciliation service.
+- **Gauge pattern**: `AtomicLong` per-resourceId trong `ConcurrentHashMap`. `computeIfAbsent` đảm bảo đăng ký Gauge với Micrometer đúng 1 lần, thread-safe.
+- **Naming**: `hcr_<domain>_<action>_<unit>`, tags dùng `snake_case` (chuẩn Prometheus).
+
+---
+
+---
+
+### ✅ Module 09 — hcr-testing (HOÀN THÀNH — 2026-04-17)
+
+**Dependency:** hcr-core, hcr-inventory, hcr-payment, hcr-eventbus, hcr-saga.
+
+| File | Ghi chú |
+|------|---------|
+| `inventory/InMemoryInventoryStrategy.java` | Thread-safe, `AtomicLong` CAS. Zero-oversell guaranteed. Testing methods: `getCurrentAvailable()`, `getReserveCallCount()`, `getOversellAttemptCount()`, `reset()`. |
+| `result/ConcurrencyTestResult.java` | @Builder. Fields: totalRequests, successCount, failureCount, oversellCount (bất biến = 0), throughputTps, p50/p95/p99. |
+| `FrameworkTestSupport.java` | Utility factory. Factories: `inMemoryInventory()`, `mockPayment*()`, `inMemoryEventBus()`. `simulateConcurrentRequests()` dùng ExecutorService + CountDownLatch. Assertions: `assertNoOversell()`, `assertZeroOversell()`, `assertThroughputAbove()`, `assertEventPublished*()`. |
+| `base/FrameworkIntegrationTest.java` | Abstract base class. Developer implement 3 method: `createOrchestrator()`, `buildTestRequest()`, `getInitialStock()`. Given/Then helpers. |
+
+**GUIDE.md:** `hcr-testing/GUIDE.md` ✅
+
+---
+
+### ✅ Module 10 — hcr-autoconfigure (HOÀN THÀNH — 2026-04-17)
 
 **Dependency:** tất cả module trên.
 
-**Thành phần cần implement:**
-- `HcrProperties` — map toàn bộ `hcr.*` config từ YAML
-- `HcrAutoConfiguration` — tạo tất cả beans tự động
-- `HcrActuatorEndpoint` — expose `/actuator/hcr` để debug
-- Fail-fast validation khi startup thiếu config
-- `GUIDE.md`
+| File | Ghi chú |
+|------|---------|
+| `HcrProperties.java` | `@ConfigurationProperties(prefix = "hcr")`. Nested classes: Inventory, Saga, Payment, EventBus, Gateway, Reconciliation. Đầy đủ defaults. |
+| `annotation/EnableHighConcurrencyResource.java` | `@Import(HcrAutoConfiguration.class)`. Developer đặt lên `@SpringBootApplication`. |
+| `condition/ConditionalOnInventoryStrategy.java` | Custom annotation + `OnInventoryStrategyCondition` đọc `hcr.inventory.strategy`. |
+| `HcrAutoConfiguration.java` | `@AutoConfiguration`. Tạo: InMemoryEventBus (default), MockPaymentGateway (fallback), MicrometerFrameworkMetrics (if Micrometer present), RedisIdempotencyHandler, RedisTokenBucketRateLimiter (if enabled), CorrelationIdFilter, HcrActuatorEndpoint. Tất cả `@ConditionalOnMissingBean`. |
+| `actuator/HcrActuatorEndpoint.java` | `GET /actuator/hcr` — trả về config active: strategy, consistency level, saga mode, event bus capabilities, gateway config. |
+| `filter/CorrelationIdFilter.java` | Marker class. Implementation ở `hcr-gateway`. |
+
+**Quan trọng:** `InventoryStrategy` bean KHÔNG tự tạo — yêu cầu `entityClass` từ developer.
+Developer phải khai báo `@Bean InventoryStrategy` thủ công với `InventoryStrategyFactory`.
+
+**GUIDE.md:** `hcr-autoconfigure/GUIDE.md` ✅
 
 ---
 
-### 🔲 Module 11 — hcr-spring-boot-starter
+### ✅ Module 11 — hcr-spring-boot-starter (HOÀN THÀNH)
 
-**Dependency:** `hcr-autoconfigure`.
-
-**Thành phần:** Chỉ là wrapper POM + `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`.
+**Thành phần:** Wrapper POM chỉ depend vào `hcr-autoconfigure`.
+`META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` đã có.
 
 ---
 
-### 🔲 Module 12 — hcr-sample
+### ✅ Module 12 — hcr-sample (HOÀN THÀNH — 2026-04-17)
 
 **Dependency:** `hcr-spring-boot-starter`.
 
-**Thành phần:** Demo app concert ticket booking — minh họa cách dùng framework từ góc độ developer.
+| File | Ghi chú |
+|------|---------|
+| `SampleApplication.java` | `@SpringBootApplication` + `@EnableHighConcurrencyResource`. |
+| `domain/ConcertTicket.java` | Extends `AbstractInventoryEntity`. Fields: concertName, venue, eventDate, pricePerTicket. Low stock threshold = 10% tổng vé. |
+| `domain/TicketOrder.java` | Extends `AbstractOrder`. Fields: totalAmount, buyerEmail, concertName. |
+| `domain/TicketRequest.java` | Extends `OrderRequest`. Business validation: max 4 vé, email hợp lệ. Factory: `TicketRequest.of()` cho test. |
+| `repository/TicketOrderRepository.java` | JPA repository. `findByOrderId()`. |
+| `service/TicketBookingOrchestrator.java` | Extends `SynchronousSagaOrchestrator`. Implement đầy đủ 6 abstract method. |
+| `controller/TicketController.java` | `POST /tickets/book` → HTTP 201/422. `record BookTicketRequest`. |
+| `application.yml` | P1 strategy, in-memory event bus, H2 DB. |
+
+**GUIDE.md:** `hcr-sample/GUIDE.md` ✅
 
 ---
 

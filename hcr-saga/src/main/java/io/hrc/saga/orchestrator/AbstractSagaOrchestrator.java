@@ -96,6 +96,16 @@ public abstract class AbstractSagaOrchestrator<
 
         // 2. Create order
         O order = createOrder(request);
+        // Framework khởi tạo các field bắt buộc nếu developer bỏ sót
+        if (order.getStatus() == null) {
+            order.setStatus(OrderStatus.PENDING);
+        }
+        if (order.getCreatedAt() == null) {
+            order.setCreatedAt(Instant.now());
+        }
+        if (order.getUpdatedAt() == null) {
+            order.setUpdatedAt(Instant.now());
+        }
         order.setExpiresAt(Instant.now().plusSeconds(getReservationTimeoutMinutes() * 60L));
 
         // 3. Build context

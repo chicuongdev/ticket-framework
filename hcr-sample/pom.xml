@@ -22,6 +22,13 @@
         <dependency>
             <groupId>io.hrc</groupId>
             <artifactId>hcr-spring-boot-starter</artifactId>
+            <exclusions>
+                <!-- Sample dùng pessimistic-lock + in-memory, không cần Redis -->
+                <exclusion>
+                    <groupId>org.redisson</groupId>
+                    <artifactId>redisson-spring-boot-starter</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>io.hrc</groupId>
@@ -40,6 +47,21 @@
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
             <scope>runtime</scope>
+        </dependency>
+        <!-- spring-data-redis cần ở compile/runtime vì InventoryStrategyFactory tham chiếu StringRedisTemplate.
+             Không cần Redisson — chỉ cần class definition. Redis sẽ không auto-connect. -->
+        <dependency>
+            <groupId>org.springframework.data</groupId>
+            <artifactId>spring-data-redis</artifactId>
+        </dependency>
+        <!-- Actuator + Prometheus metrics -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
     </dependencies>
 

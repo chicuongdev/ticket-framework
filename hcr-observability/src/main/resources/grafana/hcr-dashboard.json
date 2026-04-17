@@ -1,0 +1,260 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "HCR metrics source",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "title": "HCR Framework",
+  "description": "High Concurrency Resource Distribution — Inventory, Saga, Payment, Reconciliation",
+  "tags": ["hcr", "inventory", "saga"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Throughput (req/s)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_request_received_total[1m])) by (endpoint)",
+          "legendFormat": "{{endpoint}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Request Latency P50 / P95 / P99 (ms)",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "histogram_quantile(0.50, sum(rate(hcr_request_duration_ms_bucket[1m])) by (le, endpoint))",
+          "legendFormat": "P50 {{endpoint}}"
+        },
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "histogram_quantile(0.95, sum(rate(hcr_request_duration_ms_bucket[1m])) by (le, endpoint))",
+          "legendFormat": "P95 {{endpoint}}"
+        },
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "histogram_quantile(0.99, sum(rate(hcr_request_duration_ms_bucket[1m])) by (le, endpoint))",
+          "legendFormat": "P99 {{endpoint}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Rejected Requests (rate limit / validation / CB)",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_request_rejected_total[1m])) by (reason)",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Inventory Available (realtime)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "hcr_inventory_available",
+          "legendFormat": "{{resource_id}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Reservation Rate (by strategy)",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 8, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_reservation_attempts_total[1m])) by (strategy)",
+          "legendFormat": "{{strategy}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Oversell Prevented (cumulative)",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(hcr_oversell_prevented_total)",
+          "legendFormat": "Total oversell prevented"
+        }
+      ],
+      "options": { "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": {
+        "defaults": { "thresholds": { "steps": [{ "color": "green", "value": 0 }] } }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Reservation Latency P95 (ms)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "histogram_quantile(0.95, sum(rate(hcr_reservation_duration_ms_bucket[1m])) by (le, strategy))",
+          "legendFormat": "P95 {{strategy}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Saga Outcome Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_saga_started_total[1m]))",
+          "legendFormat": "started"
+        },
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_saga_cancelled_total[1m])) by (reason)",
+          "legendFormat": "cancelled — {{reason}}"
+        },
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_saga_compensated_total[1m]))",
+          "legendFormat": "compensated"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Payment Outcome Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_payment_attempts_total[1m])) by (gateway)",
+          "legendFormat": "attempts — {{gateway}}"
+        },
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_payment_failures_total[1m])) by (gateway)",
+          "legendFormat": "failures — {{gateway}}"
+        },
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_payment_timeouts_total[1m])) by (gateway)",
+          "legendFormat": "timeouts — {{gateway}}"
+        },
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_payment_unknown_total[1m])) by (gateway)",
+          "legendFormat": "unknown — {{gateway}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Payment Success Rate (%)",
+      "type": "gauge",
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "100 * sum(rate(hcr_payment_duration_ms_count{status=\"success\"}[5m])) / sum(rate(hcr_payment_attempts_total[5m]))",
+          "legendFormat": "success rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "yellow", "value": 90 },
+              { "color": "green", "value": 99 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Reconciliation Fixed by Case",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 32, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_reconciliation_fixed_total[5m])) by (case)",
+          "legendFormat": "{{case}}"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Inventory Mismatch (Redis vs DB)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 32, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_inventory_mismatch_total[5m])) by (resource_id)",
+          "legendFormat": "{{resource_id}}"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Event Bus — Publish / Consume Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 40, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_event_published_total[1m])) by (event_type)",
+          "legendFormat": "published — {{event_type}}"
+        },
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_event_consumed_duration_ms_count[1m])) by (event_type)",
+          "legendFormat": "consumed — {{event_type}}"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Event Bus — Failures",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 40, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(rate(hcr_event_failed_total[1m])) by (event_type, reason)",
+          "legendFormat": "{{event_type}} — {{reason}}"
+        }
+      ]
+    }
+  ]
+}
