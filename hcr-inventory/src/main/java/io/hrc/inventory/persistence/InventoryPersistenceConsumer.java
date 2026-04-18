@@ -1,12 +1,14 @@
 package io.hrc.inventory.persistence;
 
-import io.hrc.eventbus.Acknowledgment;
+import io.hrc.eventbus.EventBus;
 import io.hrc.eventbus.EventHandler;
 import io.hrc.inventory.entity.AbstractInventoryEntity;
 import io.hrc.inventory.event.ResourceReleasedEvent;
 import io.hrc.inventory.event.ResourceReservedEvent;
 import jakarta.persistence.EntityManager;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.InitializingBean;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -15,14 +17,10 @@ import java.time.Instant;
 /**
  * Idempotent consumer — đồng bộ DB sau khi Redis đã xử lý xong (P3 only).
  *
- * <p><b>Thay đổi so với phiên bản cũ:</b>
+ * <p><b>Tự động subscribe/unsubscribe</b> qua Spring lifecycle:
  * <ul>
- *   <li>Dùng {@link io.hrc.eventbus.EventBus} thay vì Spring {@code @EventListener}
- *       → message persistent, crash-safe, auto-redeliver.</li>
- *   <li>Idempotency qua {@link ProcessedEvent} + eventId thay vì
- *       {@code WHERE available >= delta} (chỉ tránh trừ âm, không tránh trừ 2 lần).</li>
- *   <li>Dùng {@link EntityManager} thay vì InventoryRecordRepository
- *       → update trực tiếp trên bảng developer.</li>
+ *   <li>{@link InitializingBean#afterPropertiesSet()} → subscribe handlers vào EventBus.</li>
+ *   <li>{@link DisposableBean#destroy()} → unsubscribe khi bean bị shutdown.</li>
  * </ul>
  *
  * <p><b>Luồng xử lý:</b>
@@ -38,27 +36,61 @@ import java.time.Instant;
  * </pre>
  */
 @Slf4j
-public class InventoryPersistenceConsumer {
+public class InventoryPersistenceConsumer implements InitializingBean, DisposableBean {
 
     private final EntityManager entityManager;
     private final Class<? extends AbstractInventoryEntity> entityClass;
     private final ProcessedEventRepository processedEventRepository;
     private final TransactionTemplate transactionTemplate;
+    private final EventBus eventBus;
+
+    private EventHandler<ResourceReservedEvent> reservedHandler;
+    private EventHandler<ResourceReleasedEvent> releasedHandler;
 
     public InventoryPersistenceConsumer(EntityManager entityManager,
                                         Class<? extends AbstractInventoryEntity> entityClass,
                                         ProcessedEventRepository processedEventRepository,
-                                        TransactionTemplate transactionTemplate) {
+                                        TransactionTemplate transactionTemplate,
+                                        EventBus eventBus) {
         this.entityManager = entityManager;
         this.entityClass = entityClass;
         this.processedEventRepository = processedEventRepository;
         this.transactionTemplate = transactionTemplate;
+        this.eventBus = eventBus;
     }
+
+    // =========================================================================
+    // Spring lifecycle — auto subscribe/unsubscribe
+    // =========================================================================
+
+    @Override
+    public void afterPropertiesSet() {
+        this.reservedHandler = buildReservedHandler();
+        this.releasedHandler = buildReleasedHandler();
+        eventBus.subscribe(ResourceReservedEvent.class, reservedHandler);
+        eventBus.subscribe(ResourceReleasedEvent.class, releasedHandler);
+        log.info("[P3-Consumer] Subscribed to ResourceReservedEvent + ResourceReleasedEvent");
+    }
+
+    @Override
+    public void destroy() {
+        if (reservedHandler != null) {
+            eventBus.unsubscribe(ResourceReservedEvent.class, reservedHandler);
+        }
+        if (releasedHandler != null) {
+            eventBus.unsubscribe(ResourceReleasedEvent.class, releasedHandler);
+        }
+        log.info("[P3-Consumer] Unsubscribed from EventBus");
+    }
+
+    // =========================================================================
+    // Handler factories — public để testing có thể gọi trực tiếp
+    // =========================================================================
 
     /**
      * Handler cho ResourceReservedEvent — trừ available trong DB.
      */
-    public EventHandler<ResourceReservedEvent> reservedHandler() {
+    public EventHandler<ResourceReservedEvent> buildReservedHandler() {
         return (event, ack) -> {
             String eventId = event.getEventId();
             String resourceId = event.getResourceId();
@@ -91,7 +123,7 @@ public class InventoryPersistenceConsumer {
     /**
      * Handler cho ResourceReleasedEvent — cộng available trong DB.
      */
-    public EventHandler<ResourceReleasedEvent> releasedHandler() {
+    public EventHandler<ResourceReleasedEvent> buildReleasedHandler() {
         return (event, ack) -> {
             String eventId = event.getEventId();
             String resourceId = event.getResourceId();
@@ -126,26 +158,16 @@ public class InventoryPersistenceConsumer {
      *
      * <p>INSERT hcr_processed_events + business logic trong cùng 1 transaction.
      * Nếu eventId đã tồn tại → DataIntegrityViolationException → skip → return false.
-     *
-     * @param eventId   ID event dùng làm dedup key
-     * @param eventType loại event (cho logging)
-     * @param action    business logic cần thực hiện
-     * @return true nếu event được xử lý, false nếu duplicate (đã xử lý trước đó)
      */
     private boolean processIdempotent(String eventId, String eventType, Runnable action) {
         try {
             transactionTemplate.execute(status -> {
-                // INSERT dedup record — nếu trùng → DataIntegrityViolationException
                 processedEventRepository.save(new ProcessedEvent(eventId, eventType));
-
-                // Business logic — chỉ chạy nếu INSERT thành công
                 action.run();
-
                 return null;
             });
             return true;
         } catch (DataIntegrityViolationException e) {
-            // eventId đã tồn tại → event đã được xử lý trước đó → skip
             return false;
         }
     }

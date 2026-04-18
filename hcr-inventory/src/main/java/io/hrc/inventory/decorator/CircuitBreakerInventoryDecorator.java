@@ -94,19 +94,24 @@ public class CircuitBreakerInventoryDecorator implements InventoryStrategy {
     public void release(String resourceId, String requestId, int quantity) {
         checkAndTransitionState();
 
+        // QUY TẮC: release() KHÔNG BAO GIỜ được reject — kể cả khi CB OPEN.
+        // Nếu skip release sẽ gây inventory leak (vé đã bị giữ chỗ nhưng không ai release).
+        // Release failure không lan rộng ra hệ thống → cho phép gọi thẳng delegate.
+        // CB chỉ bảo vệ reserve/charge (đường vào), không bảo vệ release (đường ra).
         if (state.get() == CircuitBreakerState.OPEN) {
-            log.error("[CB] Circuit OPEN — cannot release: resourceId={}. " +
-                      "Reconciliation will fix this.", resourceId);
-            // Release không reject — để Reconciliation xử lý sau
-            return;
+            log.warn("[CB] Circuit OPEN — vẫn thực hiện release để tránh inventory leak: resourceId={}",
+                    resourceId);
         }
 
         try {
             delegate.release(resourceId, requestId, quantity);
-            recordSuccess();
+            // Release thành công KHÔNG ghi vào sliding window của CB —
+            // tránh tình huống release thành công "giấu" failure rate của reserve.
         } catch (Exception e) {
-            recordFailure();
-            throw e;
+            // Release failure chỉ log, KHÔNG record vào CB và KHÔNG throw lên trên.
+            // Reconciliation sẽ phát hiện inventory mismatch và tự chữa.
+            log.error("[CB] Release failed cho resourceId={}, qty={}. Reconciliation sẽ xử lý.",
+                    resourceId, quantity, e);
         }
     }
 

@@ -92,6 +92,11 @@ public class HcrProperties {
         private int maxRetries = 3;
         private long pollingIntervalMs = 5_000L;
         private int maxPollingAttempts = 6;
+        /**
+         * Bật MockPaymentGateway cho dev/test. Default: false (production-safe).
+         * Khi false và developer không khai báo PaymentGateway → app fail-fast khi startup.
+         */
+        private boolean mockEnabled = false;
     }
 
     @Getter @Setter

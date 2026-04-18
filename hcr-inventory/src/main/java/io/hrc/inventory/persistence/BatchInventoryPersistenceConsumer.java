@@ -1,18 +1,20 @@
 package io.hrc.inventory.persistence;
 
+import io.hrc.eventbus.EventBus;
 import io.hrc.eventbus.EventHandler;
 import io.hrc.inventory.entity.AbstractInventoryEntity;
 import io.hrc.inventory.event.ResourceReleasedEvent;
 import io.hrc.inventory.event.ResourceReservedEvent;
 import jakarta.persistence.EntityManager;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.InitializingBean;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -21,6 +23,10 @@ import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Batch consumer — gom nhiều events cùng resourceId rồi flush 1 lần.
+ *
+ * <p><b>Tự động subscribe/unsubscribe</b> qua Spring lifecycle hooks
+ * ({@link InitializingBean} + {@link DisposableBean}). {@code destroy()} flush
+ * remaining buffer rồi shutdown scheduler — tránh data loss khi app restart.
  *
  * <p><b>Vấn đề SINGLE mode giải quyết không tốt:</b>
  * 10,000 reserve/s → 10,000 transaction/s (mỗi event = 1 INSERT dedup + 1 UPDATE available).
@@ -62,13 +68,14 @@ import java.util.concurrent.locks.ReentrantLock;
  * </pre>
  */
 @Slf4j
-public class BatchInventoryPersistenceConsumer {
+public class BatchInventoryPersistenceConsumer implements InitializingBean, DisposableBean {
 
     private final EntityManager entityManager;
     private final Class<? extends AbstractInventoryEntity> entityClass;
     private final ProcessedEventRepository processedEventRepository;
     private final TransactionTemplate transactionTemplate;
     private final PersistenceConfig config;
+    private final EventBus eventBus;
 
     /**
      * Buffer gom events theo resourceId.
@@ -83,16 +90,21 @@ public class BatchInventoryPersistenceConsumer {
 
     private final ScheduledExecutorService scheduler;
 
+    private EventHandler<ResourceReservedEvent> reservedHandler;
+    private EventHandler<ResourceReleasedEvent> releasedHandler;
+
     public BatchInventoryPersistenceConsumer(EntityManager entityManager,
                                              Class<? extends AbstractInventoryEntity> entityClass,
                                              ProcessedEventRepository processedEventRepository,
                                              TransactionTemplate transactionTemplate,
-                                             PersistenceConfig config) {
+                                             PersistenceConfig config,
+                                             EventBus eventBus) {
         this.entityManager = entityManager;
         this.entityClass = entityClass;
         this.processedEventRepository = processedEventRepository;
         this.transactionTemplate = transactionTemplate;
         this.config = config;
+        this.eventBus = eventBus;
 
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "hcr-batch-flush");
@@ -112,10 +124,51 @@ public class BatchInventoryPersistenceConsumer {
     }
 
     // =========================================================================
-    // EventHandler factories — tương tự InventoryPersistenceConsumer
+    // Spring lifecycle — auto subscribe/unsubscribe + graceful shutdown
     // =========================================================================
 
-    public EventHandler<ResourceReservedEvent> reservedHandler() {
+    @Override
+    public void afterPropertiesSet() {
+        this.reservedHandler = buildReservedHandler();
+        this.releasedHandler = buildReleasedHandler();
+        eventBus.subscribe(ResourceReservedEvent.class, reservedHandler);
+        eventBus.subscribe(ResourceReleasedEvent.class, releasedHandler);
+        log.info("[P3-Batch] Subscribed to ResourceReservedEvent + ResourceReleasedEvent");
+    }
+
+    /**
+     * Graceful shutdown — unsubscribe, flush remaining buffer, rồi tắt scheduler.
+     * Spring sẽ gọi tự động khi context close.
+     */
+    @Override
+    public void destroy() {
+        log.info("[P3-Batch] Shutting down — unsubscribing and flushing remaining buffer...");
+
+        if (reservedHandler != null) {
+            eventBus.unsubscribe(ResourceReservedEvent.class, reservedHandler);
+        }
+        if (releasedHandler != null) {
+            eventBus.unsubscribe(ResourceReleasedEvent.class, releasedHandler);
+        }
+
+        scheduler.shutdown();
+        flushAll();
+        try {
+            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                scheduler.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            scheduler.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+        log.info("[P3-Batch] Shutdown complete.");
+    }
+
+    // =========================================================================
+    // EventHandler factories
+    // =========================================================================
+
+    public EventHandler<ResourceReservedEvent> buildReservedHandler() {
         return (event, ack) -> {
             bufferEvent(event.getResourceId(), event.getEventId(),
                 "ResourceReservedEvent", -event.getQuantity());
@@ -123,7 +176,7 @@ public class BatchInventoryPersistenceConsumer {
         };
     }
 
-    public EventHandler<ResourceReleasedEvent> releasedHandler() {
+    public EventHandler<ResourceReleasedEvent> buildReleasedHandler() {
         return (event, ack) -> {
             bufferEvent(event.getResourceId(), event.getEventId(),
                 "ResourceReleasedEvent", event.getQuantity());
@@ -186,30 +239,15 @@ public class BatchInventoryPersistenceConsumer {
 
     /**
      * Flush 1 batch events cho 1 resourceId trong 1 transaction.
-     *
-     * <p>Logic:
-     * <ol>
-     *   <li>Tính tổng delta = sum(event.delta)</li>
-     *   <li>BEGIN TRANSACTION</li>
-     *   <li>INSERT tất cả eventIds vào hcr_processed_events</li>
-     *   <li>UPDATE available = available + totalDelta WHERE resource_id = ?</li>
-     *   <li>COMMIT</li>
-     * </ol>
-     *
-     * <p>Nếu batch INSERT fail (duplicate eventId) → fallback xử lý từng event một
-     * để xác định event nào duplicate, event nào cần xử lý.
      */
     private void doFlush(String resourceId, List<BufferedEvent> events) {
         try {
             transactionTemplate.execute(status -> {
-                // INSERT tất cả dedup records
                 for (BufferedEvent e : events) {
                     processedEventRepository.save(new ProcessedEvent(e.eventId, e.eventType));
                 }
-                // Flush INSERT trước để detect duplicate sớm
                 entityManager.flush();
 
-                // Tính tổng delta và UPDATE 1 lần
                 int totalDelta = events.stream().mapToInt(e -> e.delta).sum();
 
                 AbstractInventoryEntity entity = entityManager.find(entityClass, resourceId);
@@ -228,7 +266,6 @@ public class BatchInventoryPersistenceConsumer {
             log.debug("[P3-Batch] Flushed {} events for resourceId={}, OK", events.size(), resourceId);
 
         } catch (DataIntegrityViolationException e) {
-            // Batch có ít nhất 1 duplicate eventId → fallback từng event
             log.warn("[P3-Batch] Duplicate detected in batch for resourceId={}, " +
                 "falling back to single-event processing ({} events)", resourceId, events.size());
             fallbackSingleProcess(resourceId, events);
@@ -237,7 +274,6 @@ public class BatchInventoryPersistenceConsumer {
 
     /**
      * Fallback: xử lý từng event một khi batch fail do duplicate.
-     * Event duplicate sẽ bị skip, event mới sẽ được xử lý bình thường.
      */
     private void fallbackSingleProcess(String resourceId, List<BufferedEvent> events) {
         for (BufferedEvent event : events) {
@@ -264,24 +300,6 @@ public class BatchInventoryPersistenceConsumer {
     }
 
     /**
-     * Shutdown gracefully — flush remaining buffer rồi tắt scheduler.
-     */
-    public void shutdown() {
-        log.info("[P3-Batch] Shutting down — flushing remaining buffer...");
-        scheduler.shutdown();
-        flushAll();
-        try {
-            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                scheduler.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            scheduler.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-        log.info("[P3-Batch] Shutdown complete.");
-    }
-
-    /**
      * Số events đang chờ trong buffer (cho monitoring/testing).
      */
     public int getPendingCount() {
@@ -303,7 +321,7 @@ public class BatchInventoryPersistenceConsumer {
     private static class BufferedEvent {
         final String eventId;
         final String eventType;
-        final int delta; // âm = reserve, dương = release
+        final int delta;
 
         BufferedEvent(String eventId, String eventType, int delta) {
             this.eventId = eventId;

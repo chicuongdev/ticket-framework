@@ -21,14 +21,14 @@ HCR (High Concurrency Resource) — Spring Boot framework cho **phan phat tai ng
 ✅ hcr-eventbus      — EventBus abstraction (Kafka/RabbitMQ/Redis Streams/InMemory)
 ✅ hcr-inventory     — 3 inventory strategies (P1/P2/P3) + decorators + persistence consumers
 ✅ hcr-payment       — Payment gateway abstraction + timeout handler + mock gateway
-🔲 hcr-saga          — Saga orchestration (sync + async) ← TIEP THEO
-🔲 hcr-gateway       — HTTP entry point, idempotency, rate limiting
-🔲 hcr-reconciliation — Redis vs DB reconciliation, expired order cleanup
-🔲 hcr-observability — Metrics (Micrometer)
-🔲 hcr-testing       — Test support utilities
-🔲 hcr-autoconfigure — Spring Boot auto-configuration
-🔲 hcr-spring-boot-starter — Starter POM
-🔲 hcr-sample        — Demo app concert ticket
+✅ hcr-saga          — Saga orchestration (sync + async)
+✅ hcr-gateway       — HTTP entry point, idempotency, rate limiting
+✅ hcr-reconciliation — Redis vs DB reconciliation, expired order cleanup
+✅ hcr-observability — Metrics (Micrometer)
+✅ hcr-testing       — Test support utilities
+✅ hcr-autoconfigure — Spring Boot auto-configuration
+✅ hcr-spring-boot-starter — Starter POM
+✅ hcr-sample        — Demo app concert ticket
 ```
 
 Dependency flow:

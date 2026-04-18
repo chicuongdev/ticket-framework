@@ -77,14 +77,18 @@ public class HcrAutoConfiguration {
     // =========================================================================
 
     /**
-     * MockPaymentGateway là fallback — chỉ dùng cho test/dev.
-     * Production: developer khai báo @Bean PaymentGateway để override.
+     * MockPaymentGateway — CHỈ kích hoạt khi developer set
+     * {@code hcr.payment.mock-enabled=true} (test/dev only).
+     *
+     * <p>Production: KHÔNG bật flag này — developer PHẢI khai báo {@code @Bean PaymentGateway}
+     * trỏ tới gateway thật. Nếu thiếu, app fail-fast khi startup (tốt hơn là thanh toán giả).
      */
     @Bean
     @ConditionalOnMissingBean(PaymentGateway.class)
+    @ConditionalOnProperty(prefix = "hcr.payment", name = "mock-enabled", havingValue = "true")
     public PaymentGateway mockPaymentGateway() {
-        log.warn("[HCR] PaymentGateway: MockPaymentGateway (tỉ lệ thành công 80%). " +
-                 "Khai báo @Bean PaymentGateway để override cho môi trường production.");
+        log.warn("[HCR] PaymentGateway: MockPaymentGateway (tỉ lệ thành công 80%) — " +
+                 "CHỈ DÙNG CHO DEV/TEST. Production phải khai báo @Bean PaymentGateway thật.");
         TimeoutHandler timeoutHandler = new TimeoutHandler(null, 100, 1);
         return MockPaymentGateway.builder()
                 .successRate(0.80)

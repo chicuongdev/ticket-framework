@@ -9,7 +9,9 @@ import org.slf4j.LoggerFactory;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Xử lý khi {@code charge()} timeout — gateway không phản hồi trong thời gian quy định.
@@ -42,6 +44,7 @@ public class TimeoutHandler {
 
     private static final long DEFAULT_POLLING_INTERVAL_MS = 5_000;
     private static final int DEFAULT_MAX_POLLING_ATTEMPTS = 6;
+    private static final int DEFAULT_SCHEDULER_POOL_SIZE = 4;
 
     private final PaymentGateway gateway;
 
@@ -51,14 +54,51 @@ public class TimeoutHandler {
     /** Số lần poll tối đa. Default: 6 (= 30 giây tổng). */
     private final int maxPollingAttempts;
 
+    /**
+     * Shared scheduler pool cho tất cả async polling task.
+     * Dùng chung để tránh tạo thread mới cho mỗi timeout — chống thread explosion dưới tải cao.
+     */
+    private final ScheduledExecutorService scheduler;
+
     public TimeoutHandler(PaymentGateway gateway) {
         this(gateway, DEFAULT_POLLING_INTERVAL_MS, DEFAULT_MAX_POLLING_ATTEMPTS);
     }
 
     public TimeoutHandler(PaymentGateway gateway, long pollingIntervalMs, int maxPollingAttempts) {
+        this(gateway, pollingIntervalMs, maxPollingAttempts, DEFAULT_SCHEDULER_POOL_SIZE);
+    }
+
+    public TimeoutHandler(PaymentGateway gateway, long pollingIntervalMs, int maxPollingAttempts,
+                          int schedulerPoolSize) {
         this.gateway = gateway;
         this.pollingIntervalMs = pollingIntervalMs;
         this.maxPollingAttempts = maxPollingAttempts;
+        this.scheduler = Executors.newScheduledThreadPool(schedulerPoolSize, namedDaemonFactory());
+    }
+
+    private static ThreadFactory namedDaemonFactory() {
+        AtomicInteger counter = new AtomicInteger();
+        return r -> {
+            Thread t = new Thread(r, "payment-timeout-poller-" + counter.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        };
+    }
+
+    /**
+     * Shutdown scheduler — được gọi khi bean bị destroy bởi Spring.
+     * Các polling task đang chạy sẽ complete với UNKNOWN sau khi bị interrupt.
+     */
+    public void shutdown() {
+        scheduler.shutdown();
+        try {
+            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                scheduler.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            scheduler.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
@@ -109,12 +149,6 @@ public class TimeoutHandler {
      * @return CompletableFuture chứa kết quả polling
      */
     public CompletableFuture<PaymentResult> handleAsync(String transactionId) {
-        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "payment-timeout-poller-" + transactionId);
-            t.setDaemon(true);
-            return t;
-        });
-
         CompletableFuture<PaymentResult> future = new CompletableFuture<>();
 
         log.warn("Payment timeout detected for transaction {}. Starting async polling.", transactionId);
@@ -154,7 +188,6 @@ public class TimeoutHandler {
                     log.info("Transaction {} resolved async after {} attempt(s): {}",
                             transactionId, currentAttempt, result.getStatus());
                     future.complete(result);
-                    scheduler.shutdown();
                     return;
                 }
             } catch (Exception e) {
@@ -165,7 +198,6 @@ public class TimeoutHandler {
             if (currentAttempt >= maxAttempts) {
                 log.error("Transaction {} still UNKNOWN after {} async polling attempts.", transactionId, maxAttempts);
                 future.complete(PaymentResult.unknown(transactionId));
-                scheduler.shutdown();
                 return;
             }
 

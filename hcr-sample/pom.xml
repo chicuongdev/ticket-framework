@@ -48,11 +48,12 @@
             <artifactId>h2</artifactId>
             <scope>runtime</scope>
         </dependency>
-        <!-- spring-data-redis cần ở compile/runtime vì InventoryStrategyFactory tham chiếu StringRedisTemplate.
-             Không cần Redisson — chỉ cần class definition. Redis sẽ không auto-connect. -->
+        <!-- spring-boot-starter-data-redis: kéo Lettuce client + auto-config StringRedisTemplate.
+             Lettuce kết nối lazy → khi P1/P2 không dùng RedisTemplate, app vẫn start OK dù Redis chưa chạy.
+             Khi switch sang P3 (redis-atomic), bean StringRedisTemplate đã sẵn sàng. -->
         <dependency>
-            <groupId>org.springframework.data</groupId>
-            <artifactId>spring-data-redis</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
         <!-- Actuator + Prometheus metrics -->
         <dependency>
