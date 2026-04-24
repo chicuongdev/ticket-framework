@@ -2,12 +2,17 @@ spring:
   application:
     name: hcr-sample
   datasource:
-    url: jdbc:h2:mem:hcr_sample;DB_CLOSE_DELAY=-1
-    driver-class-name: org.h2.Driver
+    url: jdbc:postgresql://localhost:5432/hcr_sample
+    username: hcr
+    password: hcr
+    driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      ddl-auto: create-drop        # dev: DROP + CREATE mỗi lần start
     defer-datasource-initialization: true   # chạy data.sql sau khi Hibernate tạo schema
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
   sql:
     init:
       mode: always
@@ -15,14 +20,14 @@ spring:
     redis:
       host: localhost
       port: 6379
-      # Lettuce kết nối lazy — khi strategy=pessimistic-lock không ai dùng RedisTemplate
-      # → app start OK dù Redis chưa chạy. Khi switch sang redis-atomic, Redis phải được khởi động trước.
       lettuce:
         shutdown-timeout: 100ms
+  kafka:
+    bootstrap-servers: localhost:9092
 
 hcr:
   inventory:
-    strategy: redis-atomic #pessimistic-lock        # P1 for sample (no Redis needed)
+    strategy: redis-atomic            # P3 — full stack: Redis + Kafka + Postgres
     circuit-breaker:
       enabled: false
 
@@ -38,7 +43,10 @@ hcr:
     max-polling-attempts: 6
 
   event-bus:
-    type: in-memory                   # in-memory for sample app
+    type: kafka                       # KafkaEventBusAutoConfiguration kích hoạt
+    kafka:
+      bootstrap-servers: localhost:9092
+      topic-prefix: "hcr."
 
   gateway:
     rate-limiter:

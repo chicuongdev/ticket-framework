@@ -29,6 +29,18 @@
         </dependency>
         <dependency>
             <groupId>io.hrc</groupId>
+            <artifactId>hcr-eventbus</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-payment</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
+            <artifactId>hcr-saga</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.hrc</groupId>
             <artifactId>hcr-reconciliation</artifactId>
         </dependency>
         <dependency>

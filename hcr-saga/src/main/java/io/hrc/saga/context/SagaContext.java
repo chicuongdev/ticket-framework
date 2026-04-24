@@ -47,9 +47,13 @@ public class SagaContext<O extends AbstractOrder> {
     /** Correlation ID cho distributed tracing — propagate vao moi event. */
     private String correlationId;
 
+    /** Thoi diem bat dau saga (millis) — dung tinh duration cho metrics. */
+    private long sagaStartedAtMillis;
+
     public SagaContext(O order, String correlationId) {
         this.order = order;
         this.correlationId = correlationId;
+        this.sagaStartedAtMillis = System.currentTimeMillis();
     }
 
     public void markStepCompleted(String stepName) {

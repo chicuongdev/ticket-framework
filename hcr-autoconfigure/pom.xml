@@ -64,6 +64,13 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!-- Spring Kafka (optional) — chỉ khi app muốn dùng event-bus.type=kafka.
+             Đánh dấu optional để P1/P2 không cần kéo spring-kafka. -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+            <optional>true</optional>
+        </dependency>
     </dependencies>
 
 </project>

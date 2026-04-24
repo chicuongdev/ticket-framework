@@ -1,1 +1,2 @@
 io.hrc.autoconfigure.HcrAutoConfiguration
+io.hrc.autoconfigure.KafkaEventBusAutoConfiguration

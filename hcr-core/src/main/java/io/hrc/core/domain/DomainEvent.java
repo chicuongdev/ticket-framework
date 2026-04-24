@@ -27,14 +27,18 @@ import java.util.UUID;
 @Setter
 public abstract class DomainEvent {
 
-    /** UUID duy nhất toàn hệ thống, tự sinh khi tạo event. */
-    private final String eventId = UUID.randomUUID().toString();
+    /**
+     * UUID duy nhất toàn hệ thống, tự sinh khi tạo event.
+     * <p>Non-final để Jackson có thể set lại giá trị gốc khi deserialize từ Kafka
+     * (nếu final, deserialize sẽ sinh UUID mới → idempotency dedup sai).
+     */
+    private String eventId = UUID.randomUUID().toString();
 
     /**
      * Tên class của event — tự động set từ class name.
-     * Dùng để routing và logging.
+     * Non-final để Jackson set lại khi deserialize.
      */
-    private final String eventType = this.getClass().getSimpleName();
+    private String eventType = this.getClass().getSimpleName();
 
     /** ID tài nguyên liên quan đến event này. */
     private String resourceId;
@@ -42,8 +46,11 @@ public abstract class DomainEvent {
     /** ID order liên quan đến event này (null nếu event không gắn với order cụ thể). */
     private String orderId;
 
-    /** Thời điểm event xảy ra trong hệ thống. */
-    private final Instant occurredAt = Instant.now();
+    /**
+     * Thời điểm event xảy ra trong hệ thống.
+     * Non-final để Jackson set lại khi deserialize (giữ thời gian gốc).
+     */
+    private Instant occurredAt = Instant.now();
 
     /**
      * Số lần event đã được deliver nhưng consumer chưa ack.

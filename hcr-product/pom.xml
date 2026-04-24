@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.hrc.product</groupId>
+    <artifactId>hcr-product-parent</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>HCR Product - Microservices</name>
+    <description>
+        Concert ticket booking — microservices reference application built on the HCR framework.
+        Independent project: depends on hcr-* artifacts via local Maven repo (mvn install framework first).
+    </description>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.5</version>
+        <relativePath/>
+    </parent>
+
+    <modules>
+        <module>ms-shared</module>
+        <module>ms-inventory</module>
+        <module>ms-payment</module>
+        <module>ms-order</module>
+    </modules>
+
+    <properties>
+        <java.version>17</java.version>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <hcr.version>1.0.0-SNAPSHOT</hcr.version>
+        <product.version>1.0.0-SNAPSHOT</product.version>
+        <redisson.version>3.27.2</redisson.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Internal product modules -->
+            <dependency>
+                <groupId>io.hrc.product</groupId>
+                <artifactId>ms-shared</artifactId>
+                <version>${product.version}</version>
+            </dependency>
+
+            <!-- HCR framework (pulled from local Maven repo — mvn install framework first) -->
+            <dependency>
+                <groupId>io.hrc</groupId>
+                <artifactId>hcr-spring-boot-starter</artifactId>
+                <version>${hcr.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.hrc</groupId>
+                <artifactId>hcr-core</artifactId>
+                <version>${hcr.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.hrc</groupId>
+                <artifactId>hcr-eventbus</artifactId>
+                <version>${hcr.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.hrc</groupId>
+                <artifactId>hcr-inventory</artifactId>
+                <version>${hcr.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.hrc</groupId>
+                <artifactId>hcr-payment</artifactId>
+                <version>${hcr.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.hrc</groupId>
+                <artifactId>hcr-saga</artifactId>
+                <version>${hcr.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.hrc</groupId>
+                <artifactId>hcr-reconciliation</artifactId>
+                <version>${hcr.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.hrc</groupId>
+                <artifactId>hcr-observability</artifactId>
+                <version>${hcr.version}</version>
+            </dependency>
+
+            <!-- Redis client -->
+            <dependency>
+                <groupId>org.redisson</groupId>
+                <artifactId>redisson-spring-boot-starter</artifactId>
+                <version>${redisson.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <configuration>
+                        <parameters>true</parameters>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+
+</project>

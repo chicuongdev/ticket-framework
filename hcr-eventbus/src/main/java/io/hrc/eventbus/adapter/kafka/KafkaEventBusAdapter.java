@@ -1,14 +1,21 @@
 package io.hrc.eventbus.adapter.kafka;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.hrc.core.domain.DomainEvent;
 import io.hrc.eventbus.Acknowledgment;
 import io.hrc.eventbus.EventBusCapabilities;
 import io.hrc.eventbus.EventDestination;
+import io.hrc.eventbus.EventTypeRegistry;
 import io.hrc.eventbus.adapter.AbstractEventBusAdapter;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.header.internals.RecordHeader;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -25,29 +32,39 @@ import java.util.concurrent.CompletableFuture;
  * <p><b>Routing:</b> {@code EventDestination.name} → topic {@code "hcr.{name}"}.
  * Prefix {@code "hcr."} configurable qua {@code hcr.event-bus.kafka.topic-prefix}.
  *
- * <p><b>publishIdempotent():</b> Dùng Kafka idempotent producer — không cần Redis check thêm.
- * {@code enable.idempotence=true} đảm bảo không duplicate khi producer retry.
+ * <p><b>Serialization:</b> Jackson JSON. Header {@code X-Event-Type} giữ
+ * {@code event.getClass().getSimpleName()} để consumer biết deserialize ra class nào.
  *
  * <p><b>Partitioning:</b> Dùng {@code resourceId} làm partition key — đảm bảo
  * tất cả event của cùng 1 resource đi vào cùng 1 partition (ordering guaranteed).
  *
- * <p><b>Dependency:</b> Cần {@code spring-kafka} trong classpath.
- * HcrAutoConfiguration kiểm tra và throw {@code HcrFrameworkException} nếu thiếu.
+ * <p><b>Dependency:</b> Cần {@code spring-kafka} + {@code jackson-databind} trong classpath.
  */
 @Slf4j
 public class KafkaEventBusAdapter extends AbstractEventBusAdapter {
 
-    private static final String TOPIC_PREFIX = "hcr.";
+    public static final String HEADER_EVENT_TYPE = "X-Event-Type";
+    private static final String DEFAULT_TOPIC_PREFIX = "hcr.";
 
     private final KafkaTemplate<String, String> kafkaTemplate;
+    @Getter
     private final String topicPrefix;
+    private final ObjectMapper objectMapper;
+    private final EventTypeRegistry eventTypeRegistry;
 
-    public KafkaEventBusAdapter(KafkaTemplate<String, String> kafkaTemplate) {
-        this(kafkaTemplate, TOPIC_PREFIX);
+    public KafkaEventBusAdapter(KafkaTemplate<String, String> kafkaTemplate,
+                                 ObjectMapper objectMapper,
+                                 EventTypeRegistry eventTypeRegistry) {
+        this(kafkaTemplate, objectMapper, eventTypeRegistry, DEFAULT_TOPIC_PREFIX);
     }
 
-    public KafkaEventBusAdapter(KafkaTemplate<String, String> kafkaTemplate, String topicPrefix) {
+    public KafkaEventBusAdapter(KafkaTemplate<String, String> kafkaTemplate,
+                                 ObjectMapper objectMapper,
+                                 EventTypeRegistry eventTypeRegistry,
+                                 String topicPrefix) {
         this.kafkaTemplate = kafkaTemplate;
+        this.objectMapper = objectMapper;
+        this.eventTypeRegistry = eventTypeRegistry;
         this.topicPrefix = topicPrefix;
     }
 
@@ -60,24 +77,35 @@ public class KafkaEventBusAdapter extends AbstractEventBusAdapter {
     @Override
     public void publish(DomainEvent event, EventDestination destination) {
         String topic = topicPrefix + destination.getName();
-        // Dùng resourceId làm partition key → ordering per resource
         String partitionKey = event.getResourceId() != null ? event.getResourceId() : event.getEventId();
-        String payload = serializeEvent(event);
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException e) {
+            log.error("[Kafka] Serialization failed: eventId={}, type={}",
+                    event.getEventId(), event.getEventType(), e);
+            return;
+        }
 
-        log.debug("[Kafka] Publishing: topic={}, key={}, eventId={}", topic, partitionKey, event.getEventId());
+        ProducerRecord<String, String> record = new ProducerRecord<>(topic, null, partitionKey, payload);
+        record.headers().add(new RecordHeader(HEADER_EVENT_TYPE,
+                event.getEventType().getBytes(StandardCharsets.UTF_8)));
 
-        CompletableFuture<SendResult<String, String>> future =
-            kafkaTemplate.send(topic, partitionKey, payload);
+        log.debug("[Kafka] Publishing: topic={}, key={}, eventId={}, type={}",
+                topic, partitionKey, event.getEventId(), event.getEventType());
 
+        CompletableFuture<SendResult<String, String>> future = kafkaTemplate.send(record);
         future.whenComplete((result, ex) -> {
             if (ex != null) {
                 log.error("[Kafka] Publish failed: topic={}, eventId={}, error={}",
-                    topic, event.getEventId(), ex.getMessage(), ex);
+                        topic, event.getEventId(), ex.getMessage(), ex);
+                eventBusMetrics.recordEventFailed(event.getEventType(), "PUBLISH_FAILED");
             } else {
                 log.debug("[Kafka] Publish success: topic={}, partition={}, offset={}",
-                    topic,
-                    result.getRecordMetadata().partition(),
-                    result.getRecordMetadata().offset());
+                        topic,
+                        result.getRecordMetadata().partition(),
+                        result.getRecordMetadata().offset());
+                eventBusMetrics.recordEventPublished(event.getEventType(), "kafka");
             }
         });
     }
@@ -87,7 +115,7 @@ public class KafkaEventBusAdapter extends AbstractEventBusAdapter {
         // Kafka idempotent producer (enable.idempotence=true) đảm bảo không duplicate
         // khi producer retry → không cần Redis check thêm
         log.debug("[Kafka] Publishing idempotent: eventId={}, idempotencyKey={}",
-            event.getEventId(), idempotencyKey);
+                event.getEventId(), idempotencyKey);
         publish(event);
     }
 
@@ -97,51 +125,39 @@ public class KafkaEventBusAdapter extends AbstractEventBusAdapter {
     }
 
     // =========================================================================
-    // Kafka consumer callback — được gọi bởi @KafkaListener trong Spring
+    // Dispatch path — gọi bởi KafkaEventBusListener khi nhận message
     // =========================================================================
 
     /**
-     * Nhận message từ Kafka và dispatch đến handlers đã đăng ký.
-     * Được gọi bởi {@code @KafkaListener} annotation trong Spring Kafka.
+     * Deserialize payload từ Kafka rồi gọi {@link #dispatch(DomainEvent, Acknowledgment)}.
      *
-     * <p>Trong production, Spring Kafka tạo listener container tự động.
-     * Method này dùng để test và demonstrate flow.
-     *
-     * @param payload   JSON payload của event
-     * @param eventType simple class name của event
-     * @param kafkaAck  Kafka Acknowledgment từ Spring Kafka
+     * @param payload       JSON payload
+     * @param eventTypeName simple class name từ header {@code X-Event-Type}
+     * @param kafkaAck      Acknowledgment từ Spring Kafka (sẽ được wrap)
      */
-    public void onKafkaMessage(String payload, String eventType,
+    public void onKafkaMessage(String payload, String eventTypeName,
                                 org.springframework.kafka.support.Acknowledgment kafkaAck) {
-        log.debug("[Kafka] Received: eventType={}", eventType);
-
-        DomainEvent event = deserializeEvent(payload, eventType);
-        if (event == null) {
-            log.error("[Kafka] Failed to deserialize event: eventType={}, payload={}", eventType, payload);
-            kafkaAck.acknowledge(); // skip bad message
+        Class<? extends DomainEvent> eventClass = eventTypeRegistry.lookup(eventTypeName);
+        if (eventClass == null) {
+            log.warn("[Kafka] Unknown event type: {} — skipping (will ack). Payload: {}",
+                    eventTypeName, payload);
+            kafkaAck.acknowledge();
             return;
         }
 
+        DomainEvent event;
+        try {
+            event = objectMapper.readValue(payload, eventClass);
+        } catch (JsonProcessingException e) {
+            log.error("[Kafka] Deserialization failed: type={}, payload={}",
+                    eventTypeName, payload, e);
+            kafkaAck.acknowledge(); // skip bad message — tránh infinite retry
+            return;
+        }
+
+        log.debug("[Kafka] Dispatching: eventId={}, type={}", event.getEventId(), eventTypeName);
         Acknowledgment ack = new KafkaAcknowledgment(kafkaAck, event);
         dispatch(event, ack);
-    }
-
-    // =========================================================================
-    // Serialization (placeholder — production dùng Jackson/Avro)
-    // =========================================================================
-
-    private String serializeEvent(DomainEvent event) {
-        // Production: dùng ObjectMapper hoặc Avro serializer
-        // Placeholder: serialize eventId + eventType + correlationId
-        return String.format("{\"eventId\":\"%s\",\"eventType\":\"%s\",\"correlationId\":\"%s\"}",
-            event.getEventId(), event.getEventType(), event.getCorrelationId());
-    }
-
-    private DomainEvent deserializeEvent(String payload, String eventType) {
-        // Production: dùng ObjectMapper với class lookup registry
-        // Placeholder: không implement đầy đủ ở đây
-        log.debug("[Kafka] Deserializing: eventType={}", eventType);
-        return null; // Sẽ được override trong production implementation
     }
 
     // =========================================================================
@@ -161,7 +177,6 @@ public class KafkaEventBusAdapter extends AbstractEventBusAdapter {
 
         @Override
         public void acknowledge() {
-            // commitSync() — offset được commit sau khi xử lý xong
             kafkaAck.acknowledge();
             log.debug("[Kafka-Ack] Acknowledged: eventId={}", event.getEventId());
         }
@@ -174,13 +189,10 @@ public class KafkaEventBusAdapter extends AbstractEventBusAdapter {
         @Override
         public void reject(boolean requeue) {
             if (requeue) {
-                // Seek lại offset để Kafka re-deliver
-                // Trong Spring Kafka: throw exception → container sẽ seek
                 log.warn("[Kafka-Ack] Rejected (retry): eventId={}", event.getEventId());
                 event.incrementRetryCount();
-                // Không ack → Kafka sẽ re-deliver
+                // Không ack → Kafka sẽ re-deliver (consumer seek behavior của container)
             } else {
-                // Dead letter: ack message hiện tại, publish lên DLT (Dead Letter Topic)
                 kafkaAck.acknowledge();
                 log.warn("[Kafka-Ack] Rejected (dead letter): eventId={}", event.getEventId());
             }

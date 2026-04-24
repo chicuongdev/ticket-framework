@@ -1,9 +1,11 @@
 package io.hrc.payment.gateway;
 
 import io.hrc.payment.handler.TimeoutHandler;
+import io.hrc.payment.metrics.PaymentMetrics;
 import io.hrc.payment.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.net.SocketTimeoutException;
 import java.util.concurrent.TimeoutException;
@@ -60,6 +62,19 @@ public abstract class AbstractPaymentGateway implements PaymentGateway {
     /** Thời gian timeout cho mỗi lần gọi gateway (ms). */
     private final long timeoutMs;
 
+    /**
+     * Metrics. Default NO_OP; Spring autowire setter inject MicrometerFrameworkMetrics
+     * (qua FrameworkMetrics extends PaymentMetrics) khi bean được tạo.
+     */
+    protected PaymentMetrics paymentMetrics = PaymentMetrics.NO_OP;
+
+    @Autowired(required = false)
+    public void setPaymentMetrics(PaymentMetrics paymentMetrics) {
+        if (paymentMetrics != null) {
+            this.paymentMetrics = paymentMetrics;
+        }
+    }
+
     protected AbstractPaymentGateway(TimeoutHandler timeoutHandler) {
         this(timeoutHandler, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS);
     }
@@ -77,9 +92,11 @@ public abstract class AbstractPaymentGateway implements PaymentGateway {
     @Override
     public final PaymentResult charge(PaymentRequest request) {
         String txId = request.getTransactionId();
+        String gatewayName = getGatewayName();
         log.info("[{}] charge() start: txId={}, amount={} {}",
-                getGatewayName(), txId, request.getAmount(), request.getCurrency());
+                gatewayName, txId, request.getAmount(), request.getCurrency());
 
+        paymentMetrics.recordPaymentAttempt(gatewayName);
         long startTime = System.currentTimeMillis();
 
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
@@ -87,20 +104,24 @@ public abstract class AbstractPaymentGateway implements PaymentGateway {
                 PaymentResult result = doCharge(request);
                 long duration = System.currentTimeMillis() - startTime;
                 log.info("[{}] charge() completed: txId={}, status={}, duration={}ms",
-                        getGatewayName(), txId, result.getStatus(), duration);
+                        gatewayName, txId, result.getStatus(), duration);
+                recordResult(gatewayName, result, duration);
                 return result;
 
             } catch (SocketTimeoutException | TimeoutException e) {
                 // Timeout → delegate sang TimeoutHandler polling
                 long duration = System.currentTimeMillis() - startTime;
                 log.warn("[{}] charge() timeout after {}ms: txId={}. Delegating to TimeoutHandler.",
-                        getGatewayName(), duration, txId);
-                return timeoutHandler.handle(txId);
+                        gatewayName, duration, txId);
+                paymentMetrics.recordPaymentTimeout(gatewayName);
+                PaymentResult result = timeoutHandler.handle(txId);
+                recordResult(gatewayName, result, System.currentTimeMillis() - startTime);
+                return result;
 
             } catch (Exception e) {
                 if (isNetworkError(e) && attempt < maxRetries) {
                     log.warn("[{}] charge() network error (attempt {}/{}): txId={}, error={}",
-                            getGatewayName(), attempt, maxRetries, txId, e.getMessage());
+                            gatewayName, attempt, maxRetries, txId, e.getMessage());
                     sleepBeforeRetry(attempt);
                     continue;
                 }
@@ -108,14 +129,28 @@ public abstract class AbstractPaymentGateway implements PaymentGateway {
                 // Business error hoặc hết retry → trả FAILED
                 long duration = System.currentTimeMillis() - startTime;
                 log.error("[{}] charge() failed after {} attempt(s), duration={}ms: txId={}, error={}",
-                        getGatewayName(), attempt, duration, txId, e.getMessage());
+                        gatewayName, attempt, duration, txId, e.getMessage());
+                paymentMetrics.recordPaymentFailure(gatewayName, "GATEWAY_ERROR");
                 return PaymentResult.failed(txId, "GATEWAY_ERROR", e.getMessage());
             }
         }
 
         // Fallback — không nên đến đây
+        paymentMetrics.recordPaymentFailure(gatewayName, "MAX_RETRIES_EXCEEDED");
         return PaymentResult.failed(txId, "MAX_RETRIES_EXCEEDED",
                 "Exceeded " + maxRetries + " retries");
+    }
+
+    private void recordResult(String gateway, PaymentResult result, long durationMs) {
+        if (result.isSuccess()) {
+            paymentMetrics.recordPaymentSuccess(gateway, durationMs);
+        } else if (result.isTimeout()) {
+            paymentMetrics.recordPaymentTimeout(gateway);
+        } else if (result.isUnknown()) {
+            paymentMetrics.recordPaymentUnknown(gateway);
+        } else {
+            paymentMetrics.recordPaymentFailure(gateway, result.getErrorCode());
+        }
     }
 
     // =========================================================================

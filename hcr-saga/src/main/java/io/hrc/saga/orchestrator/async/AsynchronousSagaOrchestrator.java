@@ -1,6 +1,7 @@
 package io.hrc.saga.orchestrator.async;
 
 import io.hrc.core.domain.AbstractOrder;
+import io.hrc.core.domain.DomainEvent;
 import io.hrc.core.domain.OrderAccessor;
 import io.hrc.core.domain.OrderRequest;
 import io.hrc.core.enums.FailureReason;
@@ -77,11 +78,14 @@ public abstract class AsynchronousSagaOrchestrator<
             context.markStepFailed("reservation");
             // Reserve fail → khong co gi de compensate, cancel nhe
             OrderAccessor.transitionTo(order, OrderStatus.CANCELLED);
-            if (reserveResult.getFailureReason() != null) {
-                OrderAccessor.markFailedWith(order, reserveResult.getFailureReason());
+            FailureReason failureReason = reserveResult.getFailureReason();
+            if (failureReason != null) {
+                OrderAccessor.markFailedWith(order, failureReason);
             }
+            String reasonTag = failureReason != null ? failureReason.name() : "RESERVE_FAILED";
+            sagaMetrics.recordSagaCancelled(order.getResourceId(), reasonTag);
             log.info("[Saga-Async] Reserve failed, cancelled: orderId={}, reason={}",
-                    order.getOrderId(), reserveResult.getFailureReason());
+                    order.getOrderId(), failureReason);
             return order;
         }
         context.markStepCompleted("reservation");
@@ -92,16 +96,29 @@ public abstract class AsynchronousSagaOrchestrator<
         // Save saga state (SagaStateRepository — co the la Redis, khong phai DB)
         sagaStateRepository.save(context);
 
-        // Publish event cho async processing
-        eventBus.publish(new OrderCreatedEvent(
+        // Publish event cho async processing — developer override buildOrderCreatedEvent()
+        // de payload dem theo amount/currency hoac field nghiep vu khac.
+        eventBus.publish(buildOrderCreatedEvent(context));
+
+        log.info("[Saga-Async] Reserved, event published: orderId={}", order.getOrderId());
+        return order;
+    }
+
+    /**
+     * Build event publish sau khi reserve thanh cong — dung de trigger payment downstream.
+     *
+     * <p>Default tra {@link OrderCreatedEvent} chi mang quantity. Microservice override
+     * de tra ve event nghiep vu (vd: {@code PaymentRequestedEvent} co them amount/currency)
+     * — ms-payment subscribe tren topic tuong ung.
+     */
+    protected DomainEvent buildOrderCreatedEvent(SagaContext<O> context) {
+        O order = context.getOrder();
+        return new OrderCreatedEvent(
                 order.getResourceId(),
                 order.getOrderId(),
                 order.getRequesterId(),
                 order.getQuantity(),
-                context.getCorrelationId()));
-
-        log.info("[Saga-Async] Reserved, event published: orderId={}", order.getOrderId());
-        return order;
+                context.getCorrelationId());
     }
 
     // =========================================================================
@@ -171,7 +188,11 @@ public abstract class AsynchronousSagaOrchestrator<
         // Cleanup saga state
         sagaStateRepository.delete(order.getOrderId());
 
-        log.info("[Saga-Async] Confirmed: orderId={}", order.getOrderId());
+        long durationMs = System.currentTimeMillis() - context.getSagaStartedAtMillis();
+        sagaMetrics.recordSagaConfirmed(order.getResourceId(), durationMs);
+
+        log.info("[Saga-Async] Confirmed: orderId={}, durationMs={}",
+                order.getOrderId(), durationMs);
         return order;
     }
 

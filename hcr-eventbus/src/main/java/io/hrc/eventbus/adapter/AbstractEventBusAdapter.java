@@ -6,7 +6,9 @@ import io.hrc.eventbus.EventBus;
 import io.hrc.eventbus.EventBusCapabilities;
 import io.hrc.eventbus.EventDestination;
 import io.hrc.eventbus.EventHandler;
+import io.hrc.eventbus.metrics.EventBusMetrics;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -42,6 +44,19 @@ public abstract class AbstractEventBusAdapter implements EventBus {
     protected final Map<String, List<EventHandler<DomainEvent>>> handlerRegistry =
         new ConcurrentHashMap<>();
 
+    /**
+     * Metrics. Default NO_OP; Spring autowire setter inject MicrometerFrameworkMetrics
+     * (qua FrameworkMetrics extends EventBusMetrics) khi bean được tạo.
+     */
+    protected EventBusMetrics eventBusMetrics = EventBusMetrics.NO_OP;
+
+    @Autowired(required = false)
+    public void setEventBusMetrics(EventBusMetrics eventBusMetrics) {
+        if (eventBusMetrics != null) {
+            this.eventBusMetrics = eventBusMetrics;
+        }
+    }
+
     @Override
     public void publishBatch(List<? extends DomainEvent> events) {
         for (DomainEvent event : events) {
@@ -71,12 +86,13 @@ public abstract class AbstractEventBusAdapter implements EventBus {
 
     /**
      * Dispatch event đến tất cả handlers đã đăng ký cho event type này.
-     * Gọi bởi subclass sau khi nhận event từ broker.
+     * Gọi bởi subclass sau khi nhận event từ broker, hoặc bởi Spring listener
+     * bean bên ngoài (vd: KafkaEventBusListener).
      *
      * @param event event cần dispatch
      * @param ack   acknowledgment object từ broker
      */
-    protected void dispatch(DomainEvent event, Acknowledgment ack) {
+    public void dispatch(DomainEvent event, Acknowledgment ack) {
         String key = event.getClass().getSimpleName();
         List<EventHandler<DomainEvent>> handlers = handlerRegistry.get(key);
 
@@ -86,14 +102,21 @@ public abstract class AbstractEventBusAdapter implements EventBus {
             return;
         }
 
+        long startMs = System.currentTimeMillis();
+        boolean anyFailure = false;
         for (EventHandler<DomainEvent> handler : handlers) {
             try {
                 handler.handle(event, ack);
             } catch (Exception e) {
+                anyFailure = true;
                 log.error("[EventBus] Handler {} threw unexpected exception for event {}: {}",
                     handler.getClass().getSimpleName(), key, e.getMessage(), e);
+                eventBusMetrics.recordEventFailed(event.getEventType(), e.getClass().getSimpleName());
                 // Không re-throw — các handler khác vẫn được gọi
             }
+        }
+        if (!anyFailure) {
+            eventBusMetrics.recordEventConsumed(event.getEventType(), System.currentTimeMillis() - startMs);
         }
     }
 

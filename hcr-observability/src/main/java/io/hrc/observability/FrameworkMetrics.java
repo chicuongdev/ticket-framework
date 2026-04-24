@@ -1,161 +1,49 @@
 package io.hrc.observability;
 
 import io.hrc.core.enums.FailureReason;
+import io.hrc.eventbus.metrics.EventBusMetrics;
 import io.hrc.inventory.metrics.InventoryMetrics;
+import io.hrc.payment.metrics.PaymentMetrics;
 import io.hrc.reconciliation.ReconciliationCase;
 import io.hrc.reconciliation.ReconciliationMetrics;
 import io.hrc.reconciliation.model.ReconciliationResult;
+import io.hrc.saga.metrics.SagaMetrics;
 
 /**
  * Unified metrics contract for the entire HCR framework.
  *
- * <p>Extends per-module contracts ({@link InventoryMetrics}, {@link ReconciliationMetrics})
- * so a single {@link io.hrc.observability.micrometer.MicrometerFrameworkMetrics} bean can be
- * injected everywhere — inventory strategies, saga orchestrators, reconciliation service, etc.
+ * <p>Composes 5 per-module metric interfaces — một bean
+ * {@link io.hrc.observability.micrometer.MicrometerFrameworkMetrics} thỏa mãn
+ * tất cả contract, có thể inject vào bất kỳ module nào.
  *
  * <p><b>Metric groups:</b>
  * <ul>
- *   <li>Inventory (8) — inherited from {@link InventoryMetrics}</li>
- *   <li>Reconciliation (3) — inherited from {@link ReconciliationMetrics}</li>
- *   <li>Saga (4) — defined here</li>
- *   <li>Payment (5) — defined here</li>
- *   <li>Event Bus (3) — defined here</li>
+ *   <li>Inventory (8) — {@link InventoryMetrics}</li>
+ *   <li>Reconciliation (3) — {@link ReconciliationMetrics}</li>
+ *   <li>Saga (4) — {@link SagaMetrics}</li>
+ *   <li>Payment (5) — {@link PaymentMetrics}</li>
+ *   <li>Event Bus (3) — {@link EventBusMetrics}</li>
  *   <li>Gateway (4) — defined here</li>
  * </ul>
  * Total: 27 metrics.
- *
- * <p><b>Usage:</b>
- * <pre>{@code
- * // Inject FrameworkMetrics where needed:
- * private final InventoryMetrics metrics; // ← inject MicrometerFrameworkMetrics bean here
- *
- * // When Micrometer not needed (tests, no observability):
- * FrameworkMetrics noop = FrameworkMetrics.NO_OP;
- * }</pre>
  */
-public interface FrameworkMetrics extends InventoryMetrics, ReconciliationMetrics {
+public interface FrameworkMetrics extends
+        InventoryMetrics,
+        ReconciliationMetrics,
+        SagaMetrics,
+        PaymentMetrics,
+        EventBusMetrics {
 
     // -------------------------------------------------------------------------
-    // Saga metrics
+    // Gateway metrics (chỉ dùng trong hcr-gateway, không tách interface riêng
+    // vì gateway hiện chỉ có 1 implementation)
     // -------------------------------------------------------------------------
 
-    /**
-     * Ghi nhận khi một saga transaction bắt đầu (sau khi pass validation).
-     *
-     * <p>Metric: {@code hcr_saga_started_total} (counter, tag: resource_id)
-     */
-    void recordSagaStarted(String resourceId);
-
-    /**
-     * Ghi nhận khi saga hoàn thành thành công (order CONFIRMED).
-     *
-     * <p>Metric: {@code hcr_saga_duration_ms} (timer, tags: resource_id, outcome=confirmed)
-     *
-     * @param durationMs thời gian từ khi saga bắt đầu đến khi CONFIRMED (ms)
-     */
-    void recordSagaConfirmed(String resourceId, long durationMs);
-
-    /**
-     * Ghi nhận khi saga bị huỷ (order CANCELLED).
-     *
-     * <p>Metric: {@code hcr_saga_cancelled_total} (counter, tags: resource_id, reason)
-     *
-     * @param reason lý do huỷ — thường là {@link FailureReason#name()} hoặc custom string
-     */
-    void recordSagaCancelled(String resourceId, String reason);
-
-    /**
-     * Ghi nhận khi saga đã rollback thành công (compensation hoàn tất).
-     *
-     * <p>Metric: {@code hcr_saga_compensated_total} (counter, tags: resource_id, reason)
-     */
-    void recordSagaCompensated(String resourceId, String reason);
-
-    // -------------------------------------------------------------------------
-    // Payment metrics
-    // -------------------------------------------------------------------------
-
-    /**
-     * Ghi nhận một lần thử charge (kể cả thất bại).
-     *
-     * <p>Metric: {@code hcr_payment_attempts_total} (counter, tag: gateway)
-     */
-    void recordPaymentAttempt(String gateway);
-
-    /**
-     * Ghi nhận thanh toán thành công.
-     *
-     * <p>Metric: {@code hcr_payment_duration_ms} (timer, tags: gateway, status=success)
-     *
-     * @param durationMs thời gian từ khi gọi charge() đến khi nhận SUCCESS (ms)
-     */
-    void recordPaymentSuccess(String gateway, long durationMs);
-
-    /**
-     * Ghi nhận thanh toán thất bại (gateway từ chối).
-     *
-     * <p>Metric: {@code hcr_payment_failures_total} (counter, tags: gateway, error_code)
-     */
-    void recordPaymentFailure(String gateway, String errorCode);
-
-    /**
-     * Ghi nhận thanh toán timeout — gateway không phản hồi.
-     *
-     * <p>Metric: {@code hcr_payment_timeouts_total} (counter, tag: gateway)
-     */
-    void recordPaymentTimeout(String gateway);
-
-    /**
-     * Ghi nhận kết quả thanh toán không xác định — TimeoutHandler cũng không giải quyết được.
-     *
-     * <p>Metric: {@code hcr_payment_unknown_total} (counter, tag: gateway)
-     */
-    void recordPaymentUnknown(String gateway);
-
-    // -------------------------------------------------------------------------
-    // Event Bus metrics
-    // -------------------------------------------------------------------------
-
-    /**
-     * Ghi nhận sau khi publish event thành công lên broker.
-     *
-     * <p>Metric: {@code hcr_event_published_total} (counter, tags: event_type, adapter)
-     *
-     * @param adapter tên adapter: "kafka", "rabbitmq", "redis-stream", "in-memory"
-     */
-    void recordEventPublished(String eventType, String adapter);
-
-    /**
-     * Ghi nhận sau khi consumer xử lý xong event.
-     *
-     * <p>Metric: {@code hcr_event_consumed_duration_ms} (timer, tag: event_type)
-     *
-     * @param durationMs thời gian từ khi consumer nhận đến khi ack (ms)
-     */
-    void recordEventConsumed(String eventType, long durationMs);
-
-    /**
-     * Ghi nhận khi consumer xử lý event thất bại (trước khi đưa vào DLQ).
-     *
-     * <p>Metric: {@code hcr_event_failed_total} (counter, tags: event_type, reason)
-     */
-    void recordEventFailed(String eventType, String reason);
-
-    // -------------------------------------------------------------------------
-    // Gateway metrics
-    // -------------------------------------------------------------------------
-
-    /**
-     * Ghi nhận mỗi request vào gateway (trước khi validate).
-     *
-     * <p>Metric: {@code hcr_request_received_total} (counter, tag: endpoint)
-     */
+    /** Ghi nhận mỗi request vào gateway (trước khi validate). */
     void recordRequestReceived(String endpoint);
 
     /**
      * Ghi nhận request xử lý thành công (saga confirmed).
-     *
-     * <p>Metric: {@code hcr_request_duration_ms} (timer, tags: endpoint, outcome=success)
      *
      * @param durationMs thời gian end-to-end từ nhận request đến response (ms)
      */
@@ -164,17 +52,11 @@ public interface FrameworkMetrics extends InventoryMetrics, ReconciliationMetric
     /**
      * Ghi nhận request bị từ chối — rate limit, validation fail, hoặc circuit breaker open.
      *
-     * <p>Metric: {@code hcr_request_rejected_total} (counter, tags: endpoint, reason)
-     *
      * @param reason "rate_limit" | "validation" | "circuit_breaker" | custom string
      */
     void recordRequestRejected(String endpoint, String reason);
 
-    /**
-     * Ghi nhận khi idempotency cache hit — request trùng đã được xử lý trước đó.
-     *
-     * <p>Metric: {@code hcr_idempotency_hit_total} (counter, tag: endpoint)
-     */
+    /** Ghi nhận khi idempotency cache hit — request trùng đã được xử lý trước đó. */
     void recordIdempotencyHit(String endpoint);
 
     // -------------------------------------------------------------------------

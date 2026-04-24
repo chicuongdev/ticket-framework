@@ -3,7 +3,20 @@
     "allow": [
       "Bash(ls -1 */pom.xml)",
       "Bash(mvn compile:*)",
-      "Bash(mvn clean:*)"
+      "Bash(mvn clean:*)",
+      "Bash(mvn -q -o -f hcr-product/pom.xml compile)",
+      "Bash(mvn -q -o -f hcr-product/pom.xml install)",
+      "Bash(mvn -q -f hcr-product/pom.xml install)",
+      "Bash(mvn -q -o install -DskipTests)",
+      "Bash(docker compose *)",
+      "Bash(mvn -q -f hcr-product/pom.xml -pl ms-inventory -am compile)",
+      "Bash(mvn -q -f hcr-product/pom.xml -pl ms-payment -am compile)",
+      "Bash(mvn -pl ms-order -am compile -q)",
+      "Bash(mvn -pl ms-order compile -q)",
+      "Bash(mvn package *)",
+      "Bash(mvn -pl ms-payment package -DskipTests -q)",
+      "Bash(docker exec hcr-redis *)",
+      "Bash(docker exec hcr-postgres *)"
     ]
   }
 }

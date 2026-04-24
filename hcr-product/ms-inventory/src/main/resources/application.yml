@@ -1,0 +1,65 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: ms-inventory
+  datasource:
+    url: jdbc:postgresql://localhost:5432/inventory_db
+    username: hcr
+    password: hcr
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    defer-datasource-initialization: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  sql:
+    init:
+      mode: always
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  kafka:
+    bootstrap-servers: localhost:9092
+
+hcr:
+  inventory:
+    strategy: redis-atomic
+    persistence:
+      mode: single
+    circuit-breaker:
+      enabled: false
+  saga:
+    mode: async
+  payment:
+    mock-enabled: true
+  event-bus:
+    type: kafka
+    kafka:
+      bootstrap-servers: localhost:9092
+      topic-prefix: "hcr."
+      consumer-group: ms-inventory
+  gateway:
+    rate-limiter:
+      enabled: false
+  reconciliation:
+    schedule-delay-ms: 300000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus, hcr
+  metrics:
+    tags:
+      application: ms-inventory
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://localhost:9411/api/v2/spans

@@ -14,12 +14,14 @@ import io.hrc.inventory.strategy.InventoryStrategy;
 import io.hrc.payment.gateway.PaymentGateway;
 import io.hrc.payment.model.PaymentRequest;
 import io.hrc.saga.context.SagaContext;
+import io.hrc.saga.metrics.SagaMetrics;
 import io.hrc.saga.repository.SagaStateRepository;
 import io.hrc.saga.step.ConfirmationStep;
 import io.hrc.saga.step.PaymentStep;
 import io.hrc.saga.step.ReservationStep;
 import io.hrc.saga.step.SagaStep;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Instant;
 import java.util.List;
@@ -60,10 +62,23 @@ public abstract class AbstractSagaOrchestrator<
     protected final EventBus eventBus;
     protected final SagaStateRepository<O> sagaStateRepository;
 
+    /**
+     * Metrics. Default NO_OP; Spring autowire setter inject MicrometerFrameworkMetrics
+     * (qua FrameworkMetrics extends SagaMetrics) khi bean được tạo.
+     */
+    protected SagaMetrics sagaMetrics = SagaMetrics.NO_OP;
+
     // Steps — tao lazy khi can
     private ReservationStep<O> reservationStep;
     private PaymentStep<O> paymentStep;
     private ConfirmationStep<O> confirmationStep;
+
+    @Autowired(required = false)
+    public void setSagaMetrics(SagaMetrics sagaMetrics) {
+        if (sagaMetrics != null) {
+            this.sagaMetrics = sagaMetrics;
+        }
+    }
 
     protected AbstractSagaOrchestrator(InventoryStrategy inventoryStrategy,
                                         PaymentGateway paymentGateway,
@@ -113,6 +128,8 @@ public abstract class AbstractSagaOrchestrator<
 
         log.info("[Saga] Processing: orderId={}, resourceId={}, qty={}",
                 order.getOrderId(), order.getResourceId(), order.getQuantity());
+
+        sagaMetrics.recordSagaStarted(order.getResourceId());
 
         // 4. Delegate cho subclass (sync hoac async)
         return executeFlow(context);
@@ -299,7 +316,10 @@ public abstract class AbstractSagaOrchestrator<
             sagaStateRepository.delete(order.getOrderId());
         }
 
-        log.info("[Saga] Confirmed: orderId={}", order.getOrderId());
+        long durationMs = System.currentTimeMillis() - context.getSagaStartedAtMillis();
+        sagaMetrics.recordSagaConfirmed(order.getResourceId(), durationMs);
+
+        log.info("[Saga] Confirmed: orderId={}, durationMs={}", order.getOrderId(), durationMs);
         return order;
     }
 
@@ -313,6 +333,10 @@ public abstract class AbstractSagaOrchestrator<
         List<String> completed = context.getCompletedSteps();
         log.info("[Saga] Compensating {} steps: orderId={}, steps={}",
                 completed.size(), order.getOrderId(), completed);
+
+        if (completed.isEmpty()) {
+            return; // nothing to undo, no metric event
+        }
 
         // Compensate theo thu tu nguoc
         for (int i = completed.size() - 1; i >= 0; i--) {
@@ -329,6 +353,10 @@ public abstract class AbstractSagaOrchestrator<
                         stepName, order.getOrderId(), e);
             }
         }
+
+        List<String> failed = context.getFailedSteps();
+        String reason = failed.isEmpty() ? "unknown" : failed.get(failed.size() - 1);
+        sagaMetrics.recordSagaCompensated(order.getResourceId(), reason);
     }
 
     /**
@@ -361,6 +389,9 @@ public abstract class AbstractSagaOrchestrator<
         if (sagaStateRepository != null) {
             sagaStateRepository.delete(order.getOrderId());
         }
+
+        String reasonTag = reason != null ? reason.name() : "unspecified";
+        sagaMetrics.recordSagaCancelled(order.getResourceId(), reasonTag);
 
         log.info("[Saga] Cancelled: orderId={}, reason={}", order.getOrderId(), reason);
         return order;

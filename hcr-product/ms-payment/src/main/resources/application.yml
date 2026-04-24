@@ -1,0 +1,61 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: ms-payment
+  datasource:
+    url: jdbc:postgresql://localhost:5432/payment_db
+    username: hcr
+    password: hcr
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  kafka:
+    bootstrap-servers: localhost:9092
+  autoconfigure:
+    # ms-payment không dùng Redis
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+
+hcr:
+  # ms-payment không reserve inventory và không chạy saga, bỏ inventory/saga config.
+  saga:
+    mode: async
+  payment:
+    mock-enabled: true
+    timeout-ms: 5000
+    max-retries: 2
+    polling-interval-ms: 1000
+    max-polling-attempts: 5
+  event-bus:
+    type: kafka
+    kafka:
+      bootstrap-servers: localhost:9092
+      topic-prefix: "hcr."
+      consumer-group: ms-payment
+  gateway:
+    rate-limiter:
+      enabled: false
+  reconciliation:
+    schedule-delay-ms: 300000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus, hcr
+  metrics:
+    tags:
+      application: ms-payment
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://localhost:9411/api/v2/spans
