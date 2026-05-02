@@ -33,17 +33,29 @@ k6 run hcr-product/load-tests/k6/sustained.js
 k6 run --env BASE_URL=http://192.168.1.10:8081 hcr-product/load-tests/k6/burst.js
 ```
 
-## Verify zero oversell sau burst test
+## ⚠️ HIỂU ĐÚNG INVARIANT ZERO-OVERSELL
 
-```sql
--- Connect: psql -h localhost -U hcr -d order_db
-SELECT status, COUNT(*)
-FROM ticket_orders
-WHERE resource_id = 'concert-003'
-GROUP BY status;
+**HTTP 202 count CÓ THỂ > 500 mà vẫn KHÔNG oversell.** Lý do:
+1. 500 reserves đầu DECRBY thành công → Redis `concert-003` = 0
+2. Mock payment có ~10% fail rate → orchestrator `compensate()` → `release()` → Redis `INCRBY 1`
+3. Slot vừa release được request kế tiếp DECRBY → thêm 1 HTTP 202
+
+→ Tổng 202 = 500 + N (N = số reserves rotate qua compensate cycle, thường 50-150).
+
+**Verify zero-oversell ĐÚNG (chạy SAU burst test):**
+
+```bash
+# 1. DB invariant: CONFIRMED + RESERVED <= 500
+docker exec hcr-postgres psql -U hcr -d order_db -c \
+  "SELECT status, COUNT(*) FROM ticket_orders WHERE resource_id='concert-003' GROUP BY status;"
+
+# 2. Redis invariant: CONFIRMED_count + Redis_available = 500
+docker exec hcr-redis redis-cli GET "hcr:inventory:concert-003"
 ```
 
-Tổng `CONFIRMED + RESERVED <= 500`. Nếu có pending RESERVED quá 5 phút, reconciliation sẽ tự cancel + release Redis trong cycle tiếp theo.
+Cộng 2 con số phải = `total_quantity = 500`. Đây là invariant cứng — vi phạm = bug Lua hoặc bug atomicity.
+
+Nếu có pending RESERVED quá 5 phút (do payment timeout/unknown), reconciliation sẽ tự cancel + release Redis trong cycle tiếp theo.
 
 ## Quan sát trong khi chạy
 
@@ -56,11 +68,29 @@ Tổng `CONFIRMED + RESERVED <= 500`. Nếu có pending RESERVED quá 5 phút, r
 
 ## Reset giữa các lần chạy
 
-```bash
-# Reset Redis (xoá hết inventory) + restart ms-inventory để seed lại
-docker exec -it $(docker ps -qf name=redis) redis-cli FLUSHALL
-docker restart ms-inventory  # nếu chạy bằng docker; chạy local thì restart lại
+**LUÔN làm đủ 5 bước này trước khi chạy lại load test.** KHÔNG bao giờ `redis-cli SET hcr:inventory:*` thủ công (sẽ phá guard của `release.lua` vì thiếu key `hcr:inventory:total:*` → có thể oversell thật sự).
 
-# Hoặc xoá DB orders
-psql -h localhost -U hcr -d order_db -c "TRUNCATE ticket_orders;"
+```bash
+# 1. Wipe Redis (inventory keys, saga state, idempotency claims)
+docker exec hcr-redis redis-cli FLUSHALL
+
+# 2. Wipe orders + payment audit + processed events
+docker exec hcr-postgres psql -U hcr -d order_db     -c "DELETE FROM ticket_orders;"
+docker exec hcr-postgres psql -U hcr -d payment_db   -c "DELETE FROM payment_attempts;"
+docker exec hcr-postgres psql -U hcr -d inventory_db -c "DELETE FROM hcr_processed_events;"
+
+# 3. Reset available_quantity về full trong inventory_db
+#    (persistence consumer đã decrement available qua test trước)
+docker exec hcr-postgres psql -U hcr -d inventory_db -c \
+  "UPDATE concert_tickets SET available_quantity = total_quantity, version = version + 1;"
+
+# 4. Restart ms-inventory để RedisSeeder warm Redis từ Postgres
+#    (Ctrl+C trong terminal đang chạy ms-inventory, rồi chạy lại)
+java -jar ms-inventory/target/ms-inventory-1.0.0-SNAPSHOT.jar
+
+# 5. Verify TRƯỚC khi chạy k6
+docker exec hcr-redis redis-cli GET "hcr:inventory:concert-003"        # → 500
+docker exec hcr-redis redis-cli GET "hcr:inventory:total:concert-003"  # → 500
 ```
+
+`RedisSeeder` là **idempotent** (check `redis.hasKey()` trước, skip nếu có). Nếu chỉ FLUSHALL Redis mà không TRUNCATE order tables, restart ms-inventory vẫn seed lại Redis bình thường — nhưng order cũ trong DB sẽ làm sai số liệu test sau.

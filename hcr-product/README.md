@@ -390,20 +390,64 @@ k6 run load-tests/k6/burst.js
 k6 run load-tests/k6/sustained.js
 ```
 
-Verify zero oversell:
-```bash
-psql -h localhost -U hcr -d order_db \
-  -c "SELECT status, COUNT(*) FROM ticket_orders WHERE resource_id='concert-003' GROUP BY status;"
-# CONFIRMED + RESERVED phải <= 500
-```
+#### ⚠️ HIỂU ĐÚNG INVARIANT ZERO-OVERSELL
+
+**HTTP 202 count CÓ THỂ > 500 mà vẫn KHÔNG oversell.** Đây là behavior đúng, không phải bug:
+
+| Cycle | Trạng thái Redis | HTTP 202 cộng dồn |
+|-------|------------------|-------------------|
+| 1. 500 reserves đầu | available = 0 | 500 |
+| 2. Mock payment fail (~10%) → compensate → INCRBY | available > 0 | 500 |
+| 3. Reserve mới chiếm slot vừa release | available = 0 | 500 + N |
+
+→ Tổng 202 = 500 + N (N = số reserves đã rotate qua compensate cycle). Burst test thường thấy 550-650 reserves "thành công" → ~50-150 trong số đó cuối cùng là `CANCELLED` trong DB (do payment fail).
+
+**Invariant zero-oversell ĐÚNG (verify SAU test):**
+
+1. **DB invariant:** `CONFIRMED + RESERVED ≤ 500`
+   ```bash
+   docker exec hcr-postgres psql -U hcr -d order_db -c \
+     "SELECT status, COUNT(*) FROM ticket_orders WHERE resource_id='concert-003' GROUP BY status;"
+   ```
+
+2. **Redis invariant:** `CONFIRMED + Redis_available = total = 500`
+   ```bash
+   docker exec hcr-redis redis-cli GET hcr:inventory:concert-003
+   # Cộng với CONFIRMED count phải = 500
+   ```
+
+`burst.js` đã được cấu hình:
+- `http_req_failed: rate<0.01` — chỉ tính 5xx + connection errors (422 KHÔNG bị flag là failed nhờ `http.setResponseCallback`).
+- `errors: rate<0.01` — custom counter cho mọi response không phải 202/422/409.
 
 ### 8.8 Reset giữa các lần test
 
+**LUÔN dùng đúng quy trình dưới đây**, KHÔNG bao giờ `redis-cli SET hcr:inventory:*` thủ công (sẽ phá guard của `release.lua` vì thiếu key `hcr:inventory:total:*`).
+
 ```bash
+# 1. Wipe Redis (xoá tất cả inventory keys, saga state, idempotency claims)
 docker exec hcr-redis redis-cli FLUSHALL
-psql -h localhost -U hcr -d order_db -c "TRUNCATE ticket_orders;"
-# Restart ms-inventory để seed lại Redis
+
+# 2. Wipe orders + payment audit trong cả 3 DB
+docker exec hcr-postgres psql -U hcr -d order_db     -c "DELETE FROM ticket_orders;"
+docker exec hcr-postgres psql -U hcr -d payment_db   -c "DELETE FROM payment_attempts;"
+docker exec hcr-postgres psql -U hcr -d inventory_db -c "DELETE FROM hcr_processed_events;"
+
+# 3. Reset available_quantity về full trong inventory_db
+#    (do persistence consumer đã decrement available qua các test trước)
+docker exec hcr-postgres psql -U hcr -d inventory_db -c \
+  "UPDATE concert_tickets SET available_quantity = total_quantity, version = version + 1;"
+
+# 4. Restart ms-inventory để RedisSeeder warm Redis lại từ Postgres
+#    (Ctrl+C terminal đang chạy ms-inventory, rồi chạy lại jar)
+java -jar ms-inventory/target/ms-inventory-1.0.0-SNAPSHOT.jar
+
+# 5. Verify Redis state TRƯỚC khi load test
+docker exec hcr-redis redis-cli GET "hcr:inventory:concert-003"        # → 500
+docker exec hcr-redis redis-cli GET "hcr:inventory:total:concert-003"  # → 500
 ```
+
+`RedisSeeder` là **idempotent** — chỉ initialize key chưa tồn tại. Nếu sau FLUSHALL bạn restart ms-inventory mà không cần wipe gì khác thì Seeder sẽ tự seed lại từ DB (nhưng vẫn nên TRUNCATE order tables để bắt đầu sạch).
 
 ---
 

@@ -8,6 +8,8 @@ import io.hrc.gateway.idempotency.IdempotencyHandler;
 import io.hrc.gateway.idempotency.redis.RedisIdempotencyHandler;
 import io.hrc.gateway.ratelimit.RateLimiter;
 import io.hrc.gateway.ratelimit.redis.RedisTokenBucketRateLimiter;
+import io.hrc.inventory.persistence.ProcessedEventRepository;
+import io.hrc.inventory.persistence.ProcessedEventsCleanupJob;
 import io.hrc.inventory.strategy.InventoryStrategy;
 import io.hrc.observability.FrameworkMetrics;
 import io.hrc.observability.micrometer.MicrometerFrameworkMetrics;
@@ -164,6 +166,36 @@ public class HcrAutoConfiguration {
         registration.setName("hcrCorrelationIdFilter");
         log.info("[HCR] CorrelationIdFilter đã đăng ký tại HIGHEST_PRECEDENCE");
         return registration;
+    }
+
+    // =========================================================================
+    // ProcessedEvents cleanup job (edge case [EA1])
+    // =========================================================================
+
+    /**
+     * Cleanup job chống bảng {@code hcr_processed_events} phình to vô hạn.
+     *
+     * <p>Chỉ active khi:
+     * <ul>
+     *   <li>{@link ProcessedEventRepository} bean tồn tại (developer đã enable
+     *       JPA repository scan tới {@code io.hrc.inventory.persistence})</li>
+     *   <li>Property {@code hcr.event-bus.processed-events.cleanup-enabled = true} (default)</li>
+     * </ul>
+     *
+     * <p>Yêu cầu: ứng dụng PHẢI bật {@code @EnableScheduling} ở entry-point class.
+     */
+    @Bean
+    @ConditionalOnBean(ProcessedEventRepository.class)
+    @ConditionalOnMissingBean(ProcessedEventsCleanupJob.class)
+    @ConditionalOnProperty(prefix = "hcr.event-bus.processed-events", name = "cleanup-enabled",
+            havingValue = "true", matchIfMissing = true)
+    public ProcessedEventsCleanupJob processedEventsCleanupJob(
+            HcrProperties properties,
+            ProcessedEventRepository repository) {
+        HcrProperties.ProcessedEventsProperties pe = properties.getEventBus().getProcessedEvents();
+        log.info("[HCR] ProcessedEventsCleanupJob: enabled (retention={}, intervalMs={})",
+                pe.getRetention(), pe.getCleanupIntervalMs());
+        return new ProcessedEventsCleanupJob(repository, pe.getRetention());
     }
 
     // =========================================================================

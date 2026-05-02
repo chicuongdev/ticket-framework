@@ -5,6 +5,8 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
+import java.time.Duration;
+
 /**
  * YAML-to-Java mapping cho toàn bộ config {@code hcr.*}.
  *
@@ -106,6 +108,22 @@ public class HcrProperties {
         private KafkaProperties kafka = new KafkaProperties();
         private RabbitMQProperties rabbitmq = new RabbitMQProperties();
         private RedisStreamProperties redisStream = new RedisStreamProperties();
+        private ProcessedEventsProperties processedEvents = new ProcessedEventsProperties();
+    }
+
+    /**
+     * Cấu hình cho cleanup job của bảng {@code hcr_processed_events} (edge case [EA1]).
+     */
+    @Getter @Setter
+    public static class ProcessedEventsProperties {
+        /** Bật/tắt cleanup job. Default: true. */
+        private boolean cleanupEnabled = true;
+        /** Retention duration — xóa entries cũ hơn ngưỡng này. Default: 7 ngày. */
+        private Duration retention = Duration.ofDays(7);
+        /** Interval giữa các lần chạy (ms). Default: 1 giờ. */
+        private long cleanupIntervalMs = 3_600_000L;
+        /** Delay trước lần chạy đầu tiên (ms). Default: 60s. */
+        private long cleanupInitialDelayMs = 60_000L;
     }
 
     @Getter @Setter
