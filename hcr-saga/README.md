@@ -11,7 +11,10 @@
 Module cung cấp 2 implementation cho cùng 1 abstract base:
 
 - **Sync** (P1/P2): Reserve → Charge → Confirm — tất cả trong 1 HTTP request, trả 201/422
-- **Async** (P3): Reserve → publish event → trả 202; Payment + Confirm xử lý qua EventBus consumer
+- **Async** (P3): Reserve → gọi `PaymentInitiationStrategy.onResourceReserved()` → trả 202 ngay. Strategy quyết định cách trigger payment:
+  - `AutoChargeInitiation` (default, card-on-file): submit `gateway.charge()` lên background `Executor` → khi xong gọi thẳng `handlePaymentResult()` để confirm/cancel order.
+  - `UserConfirmInitiation` (redirect-style): no-op; user chủ động gọi ms-payment, kết quả quay về qua event listener.
+  - Dev có thể viết impl riêng (vd: webhook-driven).
 
 ---
 
@@ -35,7 +38,8 @@ Saga là chỗ business logic dễ rò rỉ ra khắp codebase nếu không đó
 | Nguyên lý | Áp dụng |
 |-----------|---------|
 | **Template Method** | `AbstractSagaOrchestrator` định khung 4 bước; subclass chọn sync/async |
-| **Strategy Pattern** | Saga step plug-in (`ReservationStep`, `PaymentStep`, `ConfirmationStep`) |
+| **Strategy Pattern (steps)** | Saga step plug-in (`ReservationStep`, `PaymentStep`, `ConfirmationStep`) |
+| **Strategy Pattern (payment trigger)** | `PaymentInitiationStrategy` — async saga delegate quyết định "cách trigger thanh toán" (auto-charge / user-confirm / webhook…). Mặc định `AutoChargeInitiation` |
 | **Result Object** | `StepResult` phân biệt SUCCESS / RETRY / FAIL / SKIP |
 | **Compensate ngược chiều forward** | Forward stack: reserve → charge → confirm; compensate stack: refund → release |
 | **Saga state persistence (async)** | `SagaStateRepository` bắt buộc với async để recover sau crash |
@@ -68,9 +72,25 @@ classDiagram
     class AsynchronousSagaOrchestrator {
         -EventBus eventBus
         -SagaStateRepository stateRepo
-        +process() — Reserve + publish, return 202
-        +onPaymentSucceeded(event) confirm
-        +onPaymentFailed(event) compensate
+        -PaymentInitiationStrategy paymentInit
+        +process() — Reserve + initiate payment, return 202
+        +handlePaymentResult(orderId, result) confirm/cancel
+    }
+
+    class PaymentInitiationStrategy {
+        <<interface>>
+        +onResourceReserved(order, request, correlationId) void
+    }
+
+    class AutoChargeInitiation {
+        -PaymentGateway gateway
+        -Executor executor
+        -BiConsumer~String,PaymentResult~ outcomeHandler
+        +onResourceReserved() — submit charge async, direct callback
+    }
+
+    class UserConfirmInitiation {
+        +onResourceReserved() — no-op (user-initiated)
     }
 
     class SagaStep {
@@ -134,6 +154,10 @@ classDiagram
     AbstractSagaOrchestrator ..> SagaContext
     AbstractSagaOrchestrator ..> SagaMetrics
     AsynchronousSagaOrchestrator ..> SagaStateRepository
+    AsynchronousSagaOrchestrator ..> PaymentInitiationStrategy
+
+    AutoChargeInitiation ..|> PaymentInitiationStrategy
+    UserConfirmInitiation ..|> PaymentInitiationStrategy
 
     ReservationStep ..|> SagaStep
     PaymentStep ..|> SagaStep
@@ -148,6 +172,7 @@ classDiagram
     AbstractSagaOrchestrator ..> InventoryStrategy
     AbstractSagaOrchestrator ..> PaymentGateway
     AsynchronousSagaOrchestrator ..> EventBus
+    AutoChargeInitiation ..> PaymentGateway
 ```
 
 ---
@@ -158,8 +183,9 @@ classDiagram
 |---------|-----------|---------|
 | `orchestrator` | `AbstractSagaOrchestrator` | Template chung 4 bước |
 | `orchestrator.sync` | `SynchronousSagaOrchestrator` | P1/P2 — Reserve→Charge→Confirm trong 1 request |
-| `orchestrator.async` | `AsynchronousSagaOrchestrator` | P3 — Reserve sync, Payment+Confirm async qua EventBus |
-| `step` | `SagaStep`, `ReservationStep`, `PaymentStep`, `ConfirmationStep`, `StepResult` | Step plug-in |
+| `orchestrator.async` | `AsynchronousSagaOrchestrator` | P3 — Reserve sync, payment trigger qua `PaymentInitiationStrategy` |
+| `step` | `SagaStep`, `ReservationStep`, `PaymentStep`, `ConfirmationStep`, `StepResult` | Step plug-in (sync flow + async confirmation) |
+| `payment` | `PaymentInitiationStrategy`, `AutoChargeInitiation`, `UserConfirmInitiation` | Quyết định "cách trigger thanh toán" sau khi reserve thành công trong async flow |
 | `context` | `SagaContext` | Trạng thái 1 saga instance |
 | `repository` | `SagaStateRepository` | Persist context (bắt buộc với async) |
 | `metrics` | `SagaMetrics` | Counter / timer cho Micrometer |

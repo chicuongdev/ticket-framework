@@ -11,7 +11,7 @@ import lombok.Setter;
 import java.math.BigDecimal;
 
 /**
- * Local catalog cho ms-order — giữ giá vé để build PaymentRequestedEvent.
+ * Local catalog cho ms-order — giữ giá vé để build PaymentRequest gửi sang ms-payment.
  *
  * <p>Cùng resource_id với ConcertTicket của ms-inventory. ms-order KHÔNG ghi
  * available/version (Redis là source of truth, ms-inventory persist).

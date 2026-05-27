@@ -1,0 +1,11 @@
+# ============================================================================
+# Prototype 1 — PESSIMISTIC LOCK (ms-order side)
+# ----------------------------------------------------------------------------
+# Saga: SYNC. Reserve → Charge → Confirm chạy trong cùng request thread.
+# Trả HTTP 201 (Created) khi toàn bộ saga thành công.
+# ============================================================================
+hcr:
+  inventory:
+    strategy: pessimistic-lock
+  saga:
+    mode: sync

@@ -1,0 +1,42 @@
+# ============================================================================
+# GCP topology — Data VM (hcr-data)
+# ----------------------------------------------------------------------------
+# Chỉ chạy Postgres + Redis. Kafka/Prom/Grafana/Zipkin → docker-compose.gcp-busobs.yml.
+#
+# Khởi động trên hcr-data:
+#   docker compose -f docker-compose.gcp-data.yml up -d
+# ============================================================================
+name: hcr-data
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: hcr-postgres
+    ports:
+      - "0.0.0.0:5432:5432"      # bind tất cả interface → app từ hcr-app connect được
+    environment:
+      POSTGRES_USER: hcr
+      POSTGRES_PASSWORD: hcr
+      POSTGRES_DB: postgres
+    volumes:
+      - ./observability/postgres-init:/docker-entrypoint-initdb.d
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hcr"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: hcr-redis
+    ports:
+      - "0.0.0.0:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

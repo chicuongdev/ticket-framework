@@ -12,6 +12,7 @@ import io.hrc.product.order.repository.TicketOrderRepository;
 import io.hrc.reconciliation.AbstractReconciliationService;
 import io.hrc.reconciliation.ReconciliationMetrics;
 import io.hrc.reconciliation.inventory.InventoryReconciler;
+import io.hrc.reconciliation.model.PaymentVerificationResult;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
@@ -95,6 +96,18 @@ public class TicketReconciliationService extends AbstractReconciliationService<T
     }
 
     @Override
+    protected void handleUnresolvedPayment(TicketOrder order, PaymentVerificationResult verification) {
+        // Payment chưa ngã ngũ (ms-payment/cổng thanh toán trả UNKNOWN/TIMEOUT, hoặc
+        // không hỏi được). KHÔNG cancel — giữ order ở RESERVED, cycle reconciliation
+        // sau sẽ hỏi lại. Lưới chốt cuối: order.expiresAt cho cleanup nếu treo quá lâu.
+        log.info("[Reconcile] Payment chưa ngã ngũ, giữ order chờ cycle sau: orderId={}, status={}",
+                order.getOrderId(),
+                verification.getPaymentResult() != null
+                        ? verification.getPaymentResult().getStatus()
+                        : "UNVERIFIED");
+    }
+
+    @Override
     protected void handleInventoryMismatch(String resourceId, long redisAvailable, long dbAvailable) {
         // ms-order không own inventory_db — chỉ log alert. ms-inventory tự reconcile cycle riêng.
         log.warn("[Reconcile] INVENTORY_MISMATCH resourceId={}, redis={}, db={} — ops alert only",
@@ -156,5 +169,32 @@ public class TicketReconciliationService extends AbstractReconciliationService<T
     protected List<String> getResourceIdsToReconcile() {
         // ms-order không reconcile inventory mismatch (delegated to ms-inventory)
         return List.of();
+    }
+
+    // =========================================================================
+    // Case 6 — ORPHAN_CANCELLED
+    // =========================================================================
+
+    @Override
+    protected List<TicketOrder> findOrphanCancelled() {
+        // Grace period 1 phút: tránh nhặt order vừa cancel (compensate có thể đang retry).
+        Instant before = Instant.now().minus(1, ChronoUnit.MINUTES);
+        return orderRepository.findOrphanCancelled(before);
+    }
+
+    @Override
+    protected void handleOrphanCancelled(TicketOrder order) {
+        try {
+            inventoryStrategy.release(order.getResourceId(),
+                    "reconcile-orphan-" + order.getOrderId(),
+                    order.getQuantity());
+            order.setInventoryReleasedAt(Instant.now());
+            orderRepository.save(order);
+            log.warn("[Reconcile] ORPHAN_CANCELLED resolved: orderId={}, qty={}",
+                    order.getOrderId(), order.getQuantity());
+        } catch (Exception e) {
+            log.error("[Reconcile] Orphan release failed (will retry next cycle): orderId={}, error={}",
+                    order.getOrderId(), e.getMessage());
+        }
     }
 }

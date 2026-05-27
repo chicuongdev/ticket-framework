@@ -21,4 +21,15 @@ public interface TicketOrderRepository extends JpaRepository<TicketOrder, String
     List<String> findDuplicateIdempotencyKeys();
 
     List<TicketOrder> findAllByIdempotencyKey(@Param("k") String idempotencyKey);
+
+    /**
+     * Tìm orphan: order CANCELLED/EXPIRED nhưng inventory chưa release.
+     * <p>Saga compensate gọi {@code release()} fail → {@code inventoryReleasedAt} null.
+     * Reconciliation Case 6 dùng query này để retry release.
+     */
+    @Query("SELECT o FROM TicketOrder o " +
+           "WHERE o.status IN ('CANCELLED', 'EXPIRED') " +
+           "  AND o.inventoryReleasedAt IS NULL " +
+           "  AND o.updatedAt < :before")
+    List<TicketOrder> findOrphanCancelled(@Param("before") Instant before);
 }

@@ -1,0 +1,9 @@
+# ============================================================================
+# Prototype 1 — PESSIMISTIC LOCK (ms-payment side)
+# ----------------------------------------------------------------------------
+# ms-payment behavior giống nhau với mọi prototype.
+# File này chỉ align hcr.saga.mode với ms-order/ms-inventory để consistent.
+# ============================================================================
+hcr:
+  saga:
+    mode: sync

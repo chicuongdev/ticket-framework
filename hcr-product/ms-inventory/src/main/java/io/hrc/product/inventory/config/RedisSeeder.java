@@ -8,21 +8,28 @@ import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 /**
- * Warm-up Redis từ Postgres lúc startup.
+ * Warm-up Redis từ Postgres lúc startup. CHỈ chạy cho P3.
  *
- * <p><b>Idempotent:</b> chỉ initialize những key CHƯA tồn tại trong Redis.
+ * <p><b>Idempotent (P3):</b> chỉ initialize những key CHƯA tồn tại trong Redis.
  * Restart app không bị crash vì framework's {@code initialize()} throw khi key
  * đã có. Đảm bảo Redis state không bị overwrite vô ý.
+ *
+ * <p><b>Vì sao @Profile("p3"):</b> P1/P2 dùng Postgres làm source-of-truth — data.sql
+ * (ON CONFLICT DO NOTHING) seed đủ, không cần Redis. Nếu seeder chạy ở P1/P2,
+ * {@link io.hrc.inventory.strategy.pessimistic.PessimisticLockStrategy#initialize}
+ * sẽ throw vì DB row đã tồn tại (skip-logic ở đây chỉ check Redis, không check DB).
  *
  * <p>Để force re-seed: {@code redis-cli FLUSHALL} (hoặc DEL từng key) trước khi restart.
  */
 @Component
+@Profile("p3")
 @Slf4j
 public class RedisSeeder implements ApplicationRunner {
 

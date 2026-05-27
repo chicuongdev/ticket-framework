@@ -1,0 +1,16 @@
+# ============================================================================
+# Prototype 2 — OPTIMISTIC LOCK
+# ----------------------------------------------------------------------------
+# Cơ chế        : @Version + retry với exponential backoff + jitter.
+#                 (OptimisticLockingFailureException → retry trong transaction MỚI;
+#                  bắt buộc transaction mới vì Hibernate cache version cũ trong session.)
+# Consistency   : STRONG (window = 0ms).
+# Source-of-truth: PostgreSQL.
+# Throughput    : 1000–5000 req/s (giảm mạnh khi contention cao do retry storm).
+# Saga          : SYNC — giống P1.
+# ============================================================================
+hcr:
+  inventory:
+    strategy: optimistic-lock
+  saga:
+    mode: sync

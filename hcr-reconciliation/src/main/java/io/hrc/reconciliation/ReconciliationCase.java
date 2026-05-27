@@ -28,6 +28,11 @@ package io.hrc.reconciliation;
  * Case 5 — DUPLICATE_ORDER:
  *   Tồn tại 2+ order cùng idempotencyKey — idempotency layer bị bypass.
  *   → giữ 1 order (ưu tiên CONFIRMED), cancel các order còn lại.
+ *
+ * Case 6 — ORPHAN_CANCELLED:
+ *   Order ở CANCELLED/EXPIRED nhưng inventory_released_at IS NULL —
+ *   saga compensate gọi release() fail (retry hết) → orphan.
+ *   → retry release(), set inventory_released_at khi thành công.
  * </pre>
  *
  * @see AbstractReconciliationService
@@ -47,5 +52,11 @@ public enum ReconciliationCase {
     UNPERSISTED_RESERVATION,
 
     /** Tồn tại 2+ order với cùng idempotencyKey — idempotency bị bypass. */
-    DUPLICATE_ORDER
+    DUPLICATE_ORDER,
+
+    /**
+     * Order CANCELLED/EXPIRED nhưng inventory chưa được release (saga compensate fail retry hết).
+     * Reconciliation retry release để đảm bảo zero leak (eventually consistent).
+     */
+    ORPHAN_CANCELLED
 }

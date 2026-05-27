@@ -1,0 +1,33 @@
+# ============================================================================
+# Prometheus config — GCP topology (chạy trên hcr-busobs VM)
+# ----------------------------------------------------------------------------
+# Khác với prometheus.yml (local dev):
+#   - Targets trỏ private IP của hcr-app (KHÔNG dùng host.docker.internal)
+#   - scrape_interval 30s (giảm bias load test, default Prom là 15s)
+#
+# TODO_GCP_IP: thay <HCR_APP_IP> bằng private IP của hcr-app sau khi tạo VM.
+#              Vd: gcloud compute instances list → INTERNAL_IP của hcr-app
+#              (thường là 10.20.0.2 nếu dùng subnet 10.20.0.0/24).
+#
+# Grep all placeholders cần điền:
+#   grep -r "TODO_GCP_IP\|<HCR_APP_IP>" hcr-product/
+# ============================================================================
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: ms-order
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["10.20.0.2:8081"]      # hcr-app private IP
+
+  - job_name: ms-inventory
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["10.20.0.2:8082"]      # hcr-app private IP
+
+  - job_name: ms-payment
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["10.20.0.2:8083"]      # hcr-app private IP

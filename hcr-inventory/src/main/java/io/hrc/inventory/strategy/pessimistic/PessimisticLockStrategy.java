@@ -10,6 +10,7 @@ import io.hrc.inventory.metrics.InventoryMetrics;
 import io.hrc.inventory.strategy.InventoryStrategy;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
+import jakarta.persistence.Table;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -116,27 +117,49 @@ public class PessimisticLockStrategy implements InventoryStrategy {
 
     @Override
     public void release(String resourceId, String requestId, int quantity) {
-        transactionTemplate.execute(status -> {
-            AbstractInventoryEntity entity = entityManager.find(
-                entityClass, resourceId, LockModeType.PESSIMISTIC_WRITE);
+        // Native SQL UPDATE bypass @Version check.
+        //   - AbstractInventoryEntity có @Version cho P2 dùng — nhưng P1 đã có PESSIMISTIC_WRITE lock,
+        //     không cần optimistic check. Nếu để Hibernate auto-flush (entity.setAvailable + merge),
+        //     UPDATE sẽ append "WHERE version=?" → trong rare cases (entity load stale từ shared EM
+        //     proxy hoặc connection bị recycle giữa SELECT FOR UPDATE và UPDATE), check fail →
+        //     StaleObjectStateException → compensate swallow → leak.
+        //   - Native UPDATE atomic ở DB level: SET available = available + qty, version = version + 1.
+        //     Không cần SELECT FOR UPDATE vì atomic increment (PostgreSQL row lock implicit cho UPDATE).
+        long newAvailable = transactionTemplate.execute(status -> {
+            int affected = entityManager.createNativeQuery(
+                    "UPDATE " + tableName() + " " +
+                    "SET available_quantity = available_quantity + :qty, " +
+                    "    updated_at = :now, " +
+                    "    version = version + 1 " +
+                    "WHERE resource_id = :rid")
+                .setParameter("qty", quantity)
+                .setParameter("now", Instant.now())
+                .setParameter("rid", resourceId)
+                .executeUpdate();
 
-            if (entity == null) {
+            if (affected == 0) {
                 throw new IllegalArgumentException("Resource không tồn tại: " + resourceId);
             }
 
-            long newAvailable = entity.getAvailable() + quantity;
-            entity.setAvailable(newAvailable);
-            entity.setUpdatedAt(Instant.now());
-            entityManager.merge(entity);
-
+            // remainingAfter không có sẵn (UPDATE returning chưa dùng ở đây) — gửi -1 placeholder.
+            // Hiện tại không listener nào consume field này nên OK.
             eventPublisher.publishEvent(
-                new ResourceReleasedEvent(resourceId, null, requestId, quantity, newAvailable, requestId));
+                new ResourceReleasedEvent(resourceId, null, requestId, quantity, -1L, requestId));
 
-            return null;
+            return -1L;
         });
 
         metrics.recordReleaseSuccess(resourceId, STRATEGY_NAME);
         metrics.updateAvailableGauge(resourceId, getAvailable(resourceId));
+    }
+
+    private String tableName() {
+        Table table = entityClass.getAnnotation(Table.class);
+        if (table == null || table.name().isBlank()) {
+            throw new IllegalStateException(
+                "Entity " + entityClass.getSimpleName() + " phải có @Table(name=\"...\")");
+        }
+        return table.name();
     }
 
     // =========================================================================

@@ -1,4 +1,4 @@
-// Sustained / Soak test — 200 VU constant trong 5 phút, đánh vào concert-001 (10000 vé).
+// Sustained / Soak test — 2000 VU constant trong 5 phút, đánh vào concert-001 (10000 vé).
 //
 // Mục tiêu đo:
 //   - Throughput ổn định (req/s)
@@ -14,13 +14,13 @@
 //   - Zipkin (http://localhost:9411): trace 1 order qua ms-order → ms-payment → back
 
 import { Counter } from 'k6/metrics';
-import { placeOrder, tagResponse, RESOURCES } from './lib/common.js';
+import { placeOrder, tagResponse, isAccepted, RESOURCES } from './lib/common.js';
 
 export const options = {
     scenarios: {
         soak: {
             executor: 'constant-vus',
-            vus: 200,
+            vus: 2000,
             duration: '5m',
         },
     },
@@ -28,6 +28,8 @@ export const options = {
         'http_req_duration': ['p(50)<200', 'p(95)<800', 'p(99)<2000'],
         'http_req_failed': ['rate<0.005'],
     },
+    // k6 mặc định không tính p(50)/p(99) — phải khai báo tường minh.
+    summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(50)', 'p(90)', 'p(95)', 'p(99)'],
 };
 
 const accepted = new Counter('orders_accepted');
@@ -37,7 +39,7 @@ const failed = new Counter('orders_failed');
 export default function () {
     const res = placeOrder(RESOURCES.LARGE, 1, 'soak');
     tagResponse(res);
-    if (res.status === 202) accepted.add(1);
+    if (isAccepted(res)) accepted.add(1);
     else if (res.status === 422) rejected.add(1);
     else failed.add(1);
 }
@@ -49,9 +51,9 @@ export function handleSummary(data) {
     const dur = data.metrics.http_req_duration?.values ?? {};
     return {
         stdout: `\n=== SUSTAINED TEST SUMMARY ===
-Accepted (202):  ${a}
-Rejected (422):  ${r}
-Failed   (5xx):  ${f}
+Accepted (201/202):  ${a}
+Rejected (422):      ${r}
+Failed   (5xx):      ${f}
 p50:  ${(dur['p(50)'] ?? 0).toFixed(1)}ms
 p95:  ${(dur['p(95)'] ?? 0).toFixed(1)}ms
 p99:  ${(dur['p(99)'] ?? 0).toFixed(1)}ms

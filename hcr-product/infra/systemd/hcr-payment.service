@@ -1,0 +1,20 @@
+[Unit]
+Description=HCR ms-payment
+After=network.target
+
+[Service]
+Type=simple
+User=Admin
+WorkingDirectory=/opt/hcr
+EnvironmentFile=/etc/hcr/env
+Environment="DB_NAME=payment_db"
+ExecStart=/usr/bin/java -Xms256m -Xmx1g -jar /opt/hcr/ms-payment.jar
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hcr-payment
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

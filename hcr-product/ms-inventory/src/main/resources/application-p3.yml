@@ -1,0 +1,23 @@
+# ============================================================================
+# Prototype 3 — REDIS ATOMIC
+# ----------------------------------------------------------------------------
+# Cơ chế        : Lua DECRBY atomic (Redis single-thread) trong critical path.
+#                 DB sync ASYNC qua EventBus consumer (Kafka).
+# Critical path : ZERO DB hit — chỉ Redis. Latency P50 < 5ms.
+# Consistency   : EVENTUAL (<1s typical, ≤5min worst — reconciliation fix).
+# Source-of-truth: REDIS (key hcr:inventory:{resourceId}).
+# Throughput    : 5000–10000 req/s.
+# Saga          : ASYNC — reserve return HTTP 202 ngay, payment qua EventBus.
+# ----------------------------------------------------------------------------
+# WARN: KHÔNG SET trực tiếp hcr:inventory:* qua redis-cli SET — sẽ phá guard
+# của release.lua. Nếu cần reset: FLUSHALL rồi restart Seeder.
+# ============================================================================
+hcr:
+  inventory:
+    strategy: redis-atomic
+    persistence:
+      mode: single             # single | batch — chuyển batch khi cần throughput cao hơn
+      # batch-size: 500        # chỉ dùng khi mode=batch
+      # flush-interval-ms: 1000
+  saga:
+    mode: async

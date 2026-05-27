@@ -1,0 +1,20 @@
+[Unit]
+Description=HCR ms-order
+After=network.target
+
+[Service]
+Type=simple
+User=Admin
+WorkingDirectory=/opt/hcr
+EnvironmentFile=/etc/hcr/env
+Environment="DB_NAME=order_db"
+ExecStart=/usr/bin/java -Xms512m -Xmx2g -jar /opt/hcr/ms-order.jar
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hcr-order
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

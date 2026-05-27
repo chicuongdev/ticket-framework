@@ -1,13 +1,26 @@
+# ============================================================================
+# ms-payment — BASE CONFIG
+# ============================================================================
+# ms-payment KHÔNG khác biệt giữa các prototype về logic — payment được gọi
+# sync REST cho cả P1/P2/P3 (PaymentRequestedListener đã bị xóa khi refactor
+# sang PaymentInitiationStrategy).
+#
+# Tuy nhiên vẫn cung cấp 4 file (base + p1/p2/p3) để:
+#   - SPRING_PROFILES_ACTIVE đồng nhất giữa 3 service (deploy bằng cùng .env)
+#   - giữ tính đối xứng giúp script deploy/CI đơn giản
+# ============================================================================
 server:
   port: 8083
 
 spring:
   application:
     name: ms-payment
+  profiles:
+    active: ${ACTIVE_PROTOTYPE:p1}
   datasource:
-    url: jdbc:postgresql://localhost:5432/payment_db
-    username: hcr
-    password: hcr
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:payment_db}
+    username: ${DB_USER:hcr}
+    password: ${DB_PASS:hcr}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -16,17 +29,16 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
   autoconfigure:
-    # ms-payment không dùng Redis
+    # ms-payment không dùng Redis — exclude để khỏi tạo connection thừa
     exclude:
       - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
       - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
 
 hcr:
-  # ms-payment không reserve inventory và không chạy saga, bỏ inventory/saga config.
-  saga:
-    mode: async
+  # ms-payment không reserve inventory và không chạy saga.
+  # hcr.saga.mode được set ở application-p{N}.yml chỉ để cosmetic-align với ms-order/ms-inventory.
   payment:
     mock-enabled: true
     timeout-ms: 5000
@@ -36,14 +48,14 @@ hcr:
   event-bus:
     type: kafka
     kafka:
-      bootstrap-servers: localhost:9092
+      bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
       topic-prefix: "hcr."
       consumer-group: ms-payment
   gateway:
     rate-limiter:
       enabled: false
   reconciliation:
-    schedule-delay-ms: 300000
+    schedule-delay-ms: 60000   # 60s — đồng nhất với ms-order/ms-inventory
 
 management:
   endpoints:
@@ -55,7 +67,7 @@ management:
       application: ms-payment
   tracing:
     sampling:
-      probability: 1.0
+      probability: 0.01
   zipkin:
     tracing:
-      endpoint: http://localhost:9411/api/v2/spans
+      endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}

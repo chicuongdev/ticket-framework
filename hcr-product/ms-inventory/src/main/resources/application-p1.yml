@@ -1,0 +1,14 @@
+# ============================================================================
+# Prototype 1 — PESSIMISTIC LOCK
+# ----------------------------------------------------------------------------
+# Cơ chế        : SELECT FOR UPDATE trên Postgres (entityManager.find + LockModeType.PESSIMISTIC_WRITE).
+# Consistency   : STRONG (window = 0ms, không có thời điểm bất nhất).
+# Source-of-truth: PostgreSQL (DB trong critical path).
+# Throughput    : ~1000 req/s (giới hạn bởi row lock, single-row serialization).
+# Saga          : SYNC — reserve + payment + confirm trong 1 request thread.
+# ============================================================================
+hcr:
+  inventory:
+    strategy: pessimistic-lock
+  saga:
+    mode: sync

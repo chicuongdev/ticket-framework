@@ -1,0 +1,20 @@
+[Unit]
+Description=HCR ms-inventory
+After=network.target
+
+[Service]
+Type=simple
+User=Admin
+WorkingDirectory=/opt/hcr
+EnvironmentFile=/etc/hcr/env
+Environment="DB_NAME=inventory_db"
+ExecStart=/usr/bin/java -Xms512m -Xmx2g -jar /opt/hcr/ms-inventory.jar
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hcr-inventory
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -15,9 +15,9 @@ import lombok.Getter;
  * <pre>
  *   paymentGateway.queryStatus(transactionId)
  *       → SUCCESS  → Case 2 (LATE_PAYMENT_SUCCESS): tiền đã trừ, confirm order
- *       → FAILED   → Case 1 (STALE_PENDING): gateway xử lý xong nhưng fail, cancel
- *       → UNKNOWN  → Case 1 (STALE_PENDING): không rõ, cancel + log để manual review
- *       → TIMEOUT  → Case 1 (STALE_PENDING): gateway không phản hồi, cancel + alert
+ *       → FAILED   → Case 1 (STALE_PENDING): gateway xác nhận fail, cancel + release
+ *       → UNKNOWN  → handleUnresolvedPayment(): chưa ngã ngũ, KHÔNG cancel — verify lại cycle sau
+ *       → TIMEOUT  → handleUnresolvedPayment(): chưa ngã ngũ, KHÔNG cancel — verify lại cycle sau
  * </pre>
  */
 @Getter

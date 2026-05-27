@@ -10,6 +10,9 @@ import io.hrc.product.order.saga.TicketBookingOrchestrator;
 import io.hrc.product.shared.dto.PlaceTicketOrderRequest;
 import io.hrc.product.shared.dto.TicketOrderResponse;
 import io.hrc.saga.repository.SagaStateRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import jakarta.annotation.PostConstruct;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping("/orders")
@@ -36,14 +40,44 @@ public class OrderController {
     private final TicketOrderRepository orderRepository;
     private final SagaStateRepository<TicketOrder> sagaStateRepository;
     private final StringRedisTemplate redis;
+    private final MeterRegistry meterRegistry;
+
+    // Profiling timers — Step 1 tuning journal. Đo từng chặng path POST /orders.
+    private Timer pathTotalTimer;
+    private Timer idempotencyClaimTimer;
+    private Timer orchestratorTimer;
+    private Timer idempotencySetTimer;
+
+    @PostConstruct
+    void initTimers() {
+        pathTotalTimer = Timer.builder("ms_order_path202_total_duration_ms")
+                .description("End-to-end POST /orders duration (success path)")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .register(meterRegistry);
+        idempotencyClaimTimer = Timer.builder("ms_order_idempotency_claim_duration_ms")
+                .description("Redis SETNX for idempotency claim")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .register(meterRegistry);
+        orchestratorTimer = Timer.builder("ms_order_orchestrator_duration_ms")
+                .description("orchestrator.process() = catalog lookup + reserve + saga save + publish")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .register(meterRegistry);
+        idempotencySetTimer = Timer.builder("ms_order_idempotency_set_duration_ms")
+                .description("Redis SET for storing orderId on idempotency key")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .register(meterRegistry);
+    }
 
     @PostMapping
     public ResponseEntity<?> place(@Valid @RequestBody PlaceTicketOrderRequest body) {
+        long pathStart = System.nanoTime();
         // Idempotency claim TRƯỚC khi vào saga — chống duplicate request đồng thời.
         // SETNX atomic: chỉ 1 request giành được claim, các request khác cùng key bị reject sớm.
         String idempotencyKey = IDEMPOTENCY_KEY_PREFIX + body.getIdempotencyKey();
+        long claimStart = System.nanoTime();
         Boolean claimed = redis.opsForValue()
                 .setIfAbsent(idempotencyKey, CLAIM_IN_FLIGHT, IDEMPOTENCY_TTL);
+        idempotencyClaimTimer.record(System.nanoTime() - claimStart, TimeUnit.NANOSECONDS);
         if (Boolean.FALSE.equals(claimed)) {
             return handleDuplicate(idempotencyKey);
         }
@@ -55,7 +89,9 @@ public class OrderController {
                     body.getRequesterId(),
                     body.getQuantity(),
                     body.getIdempotencyKey());
+            long orchStart = System.nanoTime();
             TicketOrder order = orchestrator.process(request);
+            orchestratorTimer.record(System.nanoTime() - orchStart, TimeUnit.NANOSECONDS);
 
             // Reserve fail path: orchestrator KHÔNG throw — set status CANCELLED rồi return.
             // Controller phải check để trả 422 thay vì 202, không thì client tưởng đặt thành công.
@@ -70,8 +106,16 @@ public class OrderController {
             }
 
             // Reserve OK → ghi orderId vào claim để duplicate request sau này tra cứu được
+            long setStart = System.nanoTime();
             redis.opsForValue().set(idempotencyKey, order.getOrderId(), IDEMPOTENCY_TTL);
-            return ResponseEntity.status(HttpStatus.ACCEPTED).body(toResponse(order));
+            idempotencySetTimer.record(System.nanoTime() - setStart, TimeUnit.NANOSECONDS);
+            pathTotalTimer.record(System.nanoTime() - pathStart, TimeUnit.NANOSECONDS);
+            // Sync (P1/P2): order da CONFIRMED ngay trong request -> 201 Created.
+            // Async (P3): order moi RESERVED, payment xu ly sau qua Kafka -> 202 Accepted.
+            HttpStatus successStatus = order.getStatus() == OrderStatus.CONFIRMED
+                    ? HttpStatus.CREATED
+                    : HttpStatus.ACCEPTED;
+            return ResponseEntity.status(successStatus).body(toResponse(order));
 
         } catch (ValidationException e) {
             redis.delete(idempotencyKey);

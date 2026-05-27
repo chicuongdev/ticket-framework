@@ -1,0 +1,16 @@
+# ============================================================================
+# Prototype 3 — REDIS ATOMIC (ms-order side)
+# ----------------------------------------------------------------------------
+# Saga: ASYNC.
+#   POST /orders → reserve Redis (atomic) → publish event → HTTP 202 (Accepted).
+#   Payment + confirm chạy bất đồng bộ qua EventBus consumers.
+# WARN: Verify zero-oversell qua DB/Redis state, KHÔNG qua HTTP 202 count
+#       (HTTP 202 count CÓ THỂ > capacity do compensate-retry cycle, không phải oversell).
+# ============================================================================
+hcr:
+  inventory:
+    strategy: redis-atomic
+    persistence:
+      mode: single
+  saga:
+    mode: async

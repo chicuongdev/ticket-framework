@@ -43,10 +43,18 @@ public class PaymentResultListener implements InitializingBean, DisposableBean {
         failedHandler = (event, ack) -> handle(event.getOrderId(),
                 PaymentResult.failed(event.getOrderId(), "PAYMENT_FAILED",
                         event.getGatewayMessage()), ack);
-        timeoutHandler = (event, ack) -> handle(event.getOrderId(),
-                PaymentResult.timeout(event.getOrderId()), ack);
-        unknownHandler = (event, ack) -> handle(event.getOrderId(),
-                PaymentResult.unknown(event.getOrderId()), ack);
+        // TIMEOUT/UNKNOWN: payment CHƯA ngã ngũ — KHÔNG cancel order. Giữ order ở RESERVED;
+        // reconciliation sẽ hỏi lại ms-payment/cổng thanh toán ở cycle sau và chốt.
+        timeoutHandler = (event, ack) -> {
+            log.info("[ms-order] Payment TIMEOUT — giữ order RESERVED chờ reconciliation: orderId={}",
+                    event.getOrderId());
+            ack.acknowledge();
+        };
+        unknownHandler = (event, ack) -> {
+            log.info("[ms-order] Payment UNKNOWN — giữ order RESERVED chờ reconciliation: orderId={}",
+                    event.getOrderId());
+            ack.acknowledge();
+        };
 
         eventBus.subscribe(PaymentSucceededEvent.class, succeededHandler);
         eventBus.subscribe(PaymentFailedEvent.class, failedHandler);

@@ -1,19 +1,19 @@
 package io.hrc.saga.orchestrator.async;
 
 import io.hrc.core.domain.AbstractOrder;
-import io.hrc.core.domain.DomainEvent;
 import io.hrc.core.domain.OrderAccessor;
 import io.hrc.core.domain.OrderRequest;
 import io.hrc.core.enums.FailureReason;
 import io.hrc.core.enums.OrderStatus;
 import io.hrc.core.exception.FrameworkException;
 import io.hrc.eventbus.EventBus;
-import io.hrc.eventbus.event.order.OrderCreatedEvent;
 import io.hrc.inventory.strategy.InventoryStrategy;
 import io.hrc.payment.gateway.PaymentGateway;
+import io.hrc.payment.model.PaymentRequest;
 import io.hrc.payment.model.PaymentResult;
 import io.hrc.saga.context.SagaContext;
 import io.hrc.saga.orchestrator.AbstractSagaOrchestrator;
+import io.hrc.saga.payment.PaymentInitiationStrategy;
 import io.hrc.saga.repository.SagaStateRepository;
 import io.hrc.saga.step.StepResult;
 import lombok.extern.slf4j.Slf4j;
@@ -26,15 +26,17 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>Validate</li>
  *   <li>Reserve inventory (Redis DECR atomic)</li>
  *   <li>Save saga state vao SagaStateRepository</li>
- *   <li>Publish {@link OrderCreatedEvent}</li>
+ *   <li>Goi {@link PaymentInitiationStrategy#onResourceReserved} — fire-and-forget</li>
  *   <li>Return order (RESERVED) — HTTP 202 ACCEPTED</li>
  * </ol>
  *
- * <p><b>Async path (qua EventBus consumers):</b>
- * <pre>
- * OrderCreatedEvent → PaymentConsumer → charge()
- * PaymentResult     → handlePaymentResult() → confirm/cancel
- * </pre>
+ * <p><b>Async path:</b> phu thuoc {@link PaymentInitiationStrategy} duoc inject:
+ * <ul>
+ *   <li>{@link io.hrc.saga.payment.AutoChargeInitiation} (default): submit charge ra
+ *       background executor → goi thang {@link #handlePaymentResult} khi xong.</li>
+ *   <li>{@link io.hrc.saga.payment.UserConfirmInitiation}: no-op; user chu dong goi
+ *       ms-payment, payment outcome event quay ve qua listener → handlePaymentResult.</li>
+ * </ul>
  *
  * <p><b>SagaStateRepository: BAT BUOC.</b> Framework throw exception khi
  * khoi tao neu khong co. Crash giua Reserve va Payment → double charge risk
@@ -49,10 +51,13 @@ public abstract class AsynchronousSagaOrchestrator<
         O extends AbstractOrder>
         extends AbstractSagaOrchestrator<REQ, O> {
 
+    private final PaymentInitiationStrategy<O> paymentInitiationStrategy;
+
     protected AsynchronousSagaOrchestrator(InventoryStrategy inventoryStrategy,
                                             PaymentGateway paymentGateway,
                                             EventBus eventBus,
-                                            SagaStateRepository<O> sagaStateRepository) {
+                                            SagaStateRepository<O> sagaStateRepository,
+                                            PaymentInitiationStrategy<O> paymentInitiationStrategy) {
         super(inventoryStrategy, paymentGateway, eventBus, sagaStateRepository);
         if (sagaStateRepository == null) {
             throw new FrameworkException(
@@ -61,6 +66,14 @@ public abstract class AsynchronousSagaOrchestrator<
                     "Please implement SagaStateRepository<YourOrderType> and register " +
                     "it as a Spring bean.");
         }
+        if (paymentInitiationStrategy == null) {
+            throw new FrameworkException(
+                    FailureReason.SYSTEM_ERROR, null, null,
+                    "AsynchronousSaga requires a PaymentInitiationStrategy bean. " +
+                    "Use AutoChargeInitiation (default) hoac UserConfirmInitiation, " +
+                    "hoac viet impl rieng.");
+        }
+        this.paymentInitiationStrategy = paymentInitiationStrategy;
     }
 
     // =========================================================================
@@ -96,29 +109,13 @@ public abstract class AsynchronousSagaOrchestrator<
         // Save saga state (SagaStateRepository — co the la Redis, khong phai DB)
         sagaStateRepository.save(context);
 
-        // Publish event cho async processing — developer override buildOrderCreatedEvent()
-        // de payload dem theo amount/currency hoac field nghiep vu khac.
-        eventBus.publish(buildOrderCreatedEvent(context));
+        // Trigger payment — strategy quyet dinh cach (auto-charge HTTP async / user-confirm no-op).
+        // Method KHONG block, saga critical path tiep tuc return ngay.
+        PaymentRequest request = buildPaymentRequest(order);
+        paymentInitiationStrategy.onResourceReserved(order, request, context.getCorrelationId());
 
-        log.info("[Saga-Async] Reserved, event published: orderId={}", order.getOrderId());
+        log.info("[Saga-Async] Reserved, payment triggered: orderId={}", order.getOrderId());
         return order;
-    }
-
-    /**
-     * Build event publish sau khi reserve thanh cong — dung de trigger payment downstream.
-     *
-     * <p>Default tra {@link OrderCreatedEvent} chi mang quantity. Microservice override
-     * de tra ve event nghiep vu (vd: {@code PaymentRequestedEvent} co them amount/currency)
-     * — ms-payment subscribe tren topic tuong ung.
-     */
-    protected DomainEvent buildOrderCreatedEvent(SagaContext<O> context) {
-        O order = context.getOrder();
-        return new OrderCreatedEvent(
-                order.getResourceId(),
-                order.getOrderId(),
-                order.getRequesterId(),
-                order.getQuantity(),
-                context.getCorrelationId());
     }
 
     // =========================================================================

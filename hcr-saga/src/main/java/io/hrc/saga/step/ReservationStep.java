@@ -7,6 +7,8 @@ import io.hrc.inventory.strategy.InventoryStrategy;
 import io.hrc.saga.context.SagaContext;
 import lombok.extern.slf4j.Slf4j;
 
+import java.time.Instant;
+
 /**
  * Step 1 trong Saga — giu cho inventory.
  *
@@ -53,14 +55,41 @@ public class ReservationStep<O extends AbstractOrder> implements SagaStep<O> {
     @Override
     public void compensate(SagaContext<O> context) {
         O order = context.getOrder();
-        try {
-            inventoryStrategy.release(
-                    order.getResourceId(), order.getOrderId(), order.getQuantity());
-            log.debug("[Saga] Release OK (compensate): orderId={}", order.getOrderId());
-        } catch (Exception e) {
-            log.error("[Saga] Release failed (compensate), Reconciliation will fix: orderId={}",
-                    order.getOrderId(), e);
+
+        // Retry với exponential backoff. release() có thể fail vì:
+        //   - StaleObjectStateException (Hibernate version interference — đã fix bằng native SQL nhưng giữ defense)
+        //   - PessimisticLockException (lock timeout)
+        //   - DataAccessException (DB connection blip, deadlock)
+        // Tổng thời gian tối đa: 50+200+500 = 750ms — chấp nhận được cho path 4xx/5xx.
+        long[] backoffMs = {50L, 200L, 500L};
+        Exception lastError = null;
+
+        for (int attempt = 0; attempt < backoffMs.length; attempt++) {
+            try {
+                inventoryStrategy.release(
+                        order.getResourceId(), order.getOrderId(), order.getQuantity());
+                order.setInventoryReleasedAt(Instant.now());   // ĐÁNH DẤU release thành công
+                log.debug("[Saga] Release OK (compensate, attempt={}): orderId={}",
+                        attempt + 1, order.getOrderId());
+                return;
+            } catch (Exception e) {
+                lastError = e;
+                log.warn("[Saga] Release failed attempt {}/{}, retrying in {}ms: orderId={}, cause={}",
+                        attempt + 1, backoffMs.length, backoffMs[attempt],
+                        order.getOrderId(), e.getMessage());
+                try {
+                    Thread.sleep(backoffMs[attempt]);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         }
+
+        // Hết retry — giữ inventoryReleasedAt=null để Reconciliation Case 6 (ORPHAN_CANCELLED) nhặt rác.
+        // Saga tiếp tục transition order → CANCELLED bình thường; reconciliation sẽ retry release sau.
+        log.error("[Saga] Release FAILED after {} retries — orphan flagged, Reconciliation Case 6 will fix: orderId={}",
+                backoffMs.length, order.getOrderId(), lastError);
     }
 
     @Override

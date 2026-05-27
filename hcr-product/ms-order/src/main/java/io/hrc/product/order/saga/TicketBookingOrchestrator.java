@@ -1,6 +1,5 @@
 package io.hrc.product.order.saga;
 
-import io.hrc.core.domain.DomainEvent;
 import io.hrc.eventbus.EventBus;
 import io.hrc.inventory.strategy.InventoryStrategy;
 import io.hrc.payment.gateway.PaymentGateway;
@@ -8,46 +7,59 @@ import io.hrc.payment.model.PaymentRequest;
 import io.hrc.product.order.domain.ConcertTicket;
 import io.hrc.product.order.domain.TicketOrder;
 import io.hrc.product.order.domain.TicketRequest;
-import io.hrc.product.order.repository.ConcertTicketRepository;
 import io.hrc.product.order.repository.TicketOrderRepository;
-import io.hrc.product.shared.event.PaymentRequestedEvent;
-import io.hrc.saga.context.SagaContext;
+import io.hrc.product.order.service.ConcertTicketCatalog;
 import io.hrc.saga.orchestrator.async.AsynchronousSagaOrchestrator;
+import io.hrc.saga.payment.PaymentInitiationStrategy;
 import io.hrc.saga.repository.SagaStateRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
- * Async saga cho đặt vé concert. Reserve Redis sync, payment xử lý qua Kafka events.
- *
- * <p>Override {@link #buildOrderCreatedEvent} để publish {@link PaymentRequestedEvent}
- * thay vì framework's OrderCreatedEvent — vì ms-payment cần biết amount + currency.
+ * Async saga cho dat ve concert. Reserve Redis sync, payment xu ly nen async qua
+ * {@link PaymentInitiationStrategy} (default {@code AutoChargeInitiation}: HTTP sang
+ * ms-payment + goi thang handlePaymentResult khi xong).
  */
 @Service
+@ConditionalOnProperty(name = "hcr.saga.mode", havingValue = "async", matchIfMissing = true)
 @Slf4j
 public class TicketBookingOrchestrator
         extends AsynchronousSagaOrchestrator<TicketRequest, TicketOrder> {
 
     private final TicketOrderRepository orderRepository;
-    private final ConcertTicketRepository catalogRepository;
+    private final ConcertTicketCatalog catalog;
+    private final Timer catalogLookupTimer;
 
     public TicketBookingOrchestrator(InventoryStrategy inventoryStrategy,
                                       PaymentGateway paymentGateway,
                                       EventBus eventBus,
                                       SagaStateRepository<TicketOrder> sagaStateRepository,
+                                      PaymentInitiationStrategy<TicketOrder> paymentInitiationStrategy,
                                       TicketOrderRepository orderRepository,
-                                      ConcertTicketRepository catalogRepository) {
-        super(inventoryStrategy, paymentGateway, eventBus, sagaStateRepository);
+                                      ConcertTicketCatalog catalog,
+                                      MeterRegistry meterRegistry) {
+        super(inventoryStrategy, paymentGateway, eventBus, sagaStateRepository,
+                paymentInitiationStrategy);
         this.orderRepository = orderRepository;
-        this.catalogRepository = catalogRepository;
+        this.catalog = catalog;
+        this.catalogLookupTimer = Timer.builder("ms_order_catalog_lookup_duration_ms")
+                .description("ConcertTicket catalog lookup per POST /orders (in-memory cache after Step 2)")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .register(meterRegistry);
     }
 
     @Override
     protected TicketOrder createOrder(TicketRequest request) {
-        ConcertTicket catalog = catalogRepository.findById(request.getResourceId()).orElse(null);
+        long catalogStart = System.nanoTime();
+        ConcertTicket ticket = catalog.findById(request.getResourceId()).orElse(null);
+        catalogLookupTimer.record(System.nanoTime() - catalogStart, TimeUnit.NANOSECONDS);
 
         TicketOrder order = new TicketOrder();
         order.setOrderId(UUID.randomUUID().toString());
@@ -56,13 +68,13 @@ public class TicketBookingOrchestrator
         order.setQuantity(request.getQuantity());
         order.setIdempotencyKey(request.getIdempotencyKey());
 
-        if (catalog != null) {
-            order.setConcertName(catalog.getConcertName());
-            order.setCurrency(catalog.getCurrency());
-            order.setTotalAmount(catalog.getPricePerTicket()
+        if (ticket != null) {
+            order.setConcertName(ticket.getConcertName());
+            order.setCurrency(ticket.getCurrency());
+            order.setTotalAmount(ticket.getPricePerTicket()
                     .multiply(BigDecimal.valueOf(request.getQuantity())));
         } else {
-            // Resource không có catalog — set defaults; reserve sẽ tự fail nếu Redis không init
+            // Resource khong co catalog — set defaults; reserve se tu fail neu Redis khong init
             order.setCurrency("VND");
             order.setTotalAmount(BigDecimal.ZERO);
             log.warn("[ms-order] No catalog for resourceId={}, totalAmount defaults to 0",
@@ -83,25 +95,17 @@ public class TicketBookingOrchestrator
 
     @Override
     protected PaymentRequest buildPaymentRequest(TicketOrder order) {
-        // Sync path không dùng — async qua PaymentRequestedEvent. Giữ stub cho retry/admin path.
+        // Saga goi:
+        //  - P1/P2 sync: PaymentStep.charge() -> RemotePaymentGateway -> POST ms-payment
+        //  - P3 async: AutoChargeInitiation.charge() -> RemotePaymentGateway -> POST ms-payment
+        // resourceId dat trong metadata de ms-payment ghi vao PaymentAttempt.
         return PaymentRequest.builder()
                 .transactionId(order.getOrderId())
                 .amount(order.getTotalAmount().longValueExact())
                 .currency(order.getCurrency())
                 .description("Concert ticket: " + order.getConcertName())
+                .metadata(java.util.Map.of("resourceId", order.getResourceId()))
                 .build();
-    }
-
-    @Override
-    protected DomainEvent buildOrderCreatedEvent(SagaContext<TicketOrder> context) {
-        TicketOrder order = context.getOrder();
-        return new PaymentRequestedEvent(
-                order.getResourceId(),
-                order.getOrderId(),
-                order.getRequesterId(),
-                order.getTotalAmount(),
-                order.getCurrency(),
-                context.getCorrelationId());
     }
 
     @Override

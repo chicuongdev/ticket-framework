@@ -1,14 +1,35 @@
+# ============================================================================
+# ms-order — BASE CONFIG (shared across P1 / P2 / P3)
+# ============================================================================
+# Prototype được chọn qua env var ACTIVE_PROTOTYPE (default = p1).
+# WARN PHẢI set cùng giá trị ACTIVE_PROTOTYPE với ms-inventory + ms-payment —
+#      nếu lệch (vd ms-order=p3 / ms-inventory=p1) hệ thống sẽ vỡ ngầm
+#      (async saga expect Redis source-of-truth, sync saga expect DB source-of-truth).
+# ============================================================================
 server:
   port: 8081
+  tomcat:
+    threads:
+      max: 400              # default 200 — đủ chỗ cho ~1000 RPS với latency 100-300ms
+      min-spare: 50
+    accept-count: 500       # default 100 — queue khi tất cả threads bận
+    max-connections: 4000   # default 8192, giữ tường minh
 
 spring:
   application:
     name: ms-order
+  profiles:
+    active: ${ACTIVE_PROTOTYPE:p1}
   datasource:
-    url: jdbc:postgresql://localhost:5432/order_db
-    username: hcr
-    password: hcr
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:order_p1_db}
+    username: ${DB_USER:hcr}
+    password: ${DB_PASS:hcr}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 50         # default 10 — quá ít cho 1000 RPS
+      minimum-idle: 10
+      connection-timeout: 5000      # fail fast khi pool exhausted (default 30s quá lâu)
+      leak-detection-threshold: 30000
   jpa:
     hibernate:
       ddl-auto: update
@@ -21,33 +42,42 @@ spring:
       mode: always
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 5000ms              # per-op timeout, match Hikari connection-timeout (default Lettuce 60s — quá lâu, OOM risk)
+      connect-timeout: 2000ms      # TCP connect, dùng khi reconnect dưới spike
+      lettuce:
+        pool:
+          enabled: true            # Step 2b — pool thay vì 1 shared multiplexed conn
+          max-active: 64           # số connection song song tối đa
+          max-idle: 20
+          min-idle: 8
+          max-wait: 2000ms         # đợi pool max 2s, sau đó fail thay vì pile up thread
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
 
 hcr:
+  # NOTE:
+  #   hcr.inventory.strategy + hcr.inventory.persistence + hcr.saga.mode
+  #   → set ở application-p{1|2|3}.yml
   inventory:
-    strategy: redis-atomic
-    persistence:
-      mode: single
     circuit-breaker:
       enabled: false
-  saga:
-    mode: async
-  payment:
-    mock-enabled: true
+  # ms-order không còn payment gateway local — mọi thanh toán gọi sang ms-payment.
+  product:
+    ms-payment:
+      base-url: ${MS_PAYMENT_URL:http://localhost:8083}
   event-bus:
     type: kafka
     kafka:
-      bootstrap-servers: localhost:9092
+      bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
       topic-prefix: "hcr."
       consumer-group: ms-order
   gateway:
     rate-limiter:
       enabled: false
   reconciliation:
-    schedule-delay-ms: 300000
+    schedule-delay-ms: 60000   # 60s — đủ nhanh để verify orphan reconciliation (Case 6) trong test
 
 management:
   endpoints:
@@ -59,7 +89,7 @@ management:
       application: ms-order
   tracing:
     sampling:
-      probability: 1.0
+      probability: 0.01
   zipkin:
     tracing:
-      endpoint: http://localhost:9411/api/v2/spans
+      endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}

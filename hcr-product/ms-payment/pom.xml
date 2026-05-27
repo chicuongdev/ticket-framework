@@ -13,8 +13,9 @@
     <artifactId>ms-payment</artifactId>
     <name>ms-payment</name>
     <description>
-        Payment service. Subscribes PaymentRequestedEvent, calls PaymentGateway, publishes
-        PaymentSucceeded/Failed/Timeout/Unknown events. Owns payment_db (PaymentAttempt audit log).
+        Payment service. Exposes HTTP endpoint POST /payments (called by ms-order's
+        AutoChargeInitiation for P3 + PaymentStep for P1/P2). Owns payment_db
+        (PaymentAttempt audit log).
     </description>
 
     <dependencies>

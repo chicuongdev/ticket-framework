@@ -1,0 +1,436 @@
+# HELP jvm_buffer_count_buffers An estimate of the number of buffers in the pool
+# TYPE jvm_buffer_count_buffers gauge
+jvm_buffer_count_buffers{application="ms-order",id="mapped",} 0.0
+jvm_buffer_count_buffers{application="ms-order",id="direct",} 418.0
+jvm_buffer_count_buffers{application="ms-order",id="mapped - 'non-volatile memory'",} 0.0
+# HELP executor_pool_core_threads The core number of threads for the pool
+# TYPE executor_pool_core_threads gauge
+executor_pool_core_threads{application="ms-order",name="applicationTaskExecutor",} 8.0
+executor_pool_core_threads{application="ms-order",name="taskScheduler",} 1.0
+# HELP hcr_inventory_available Current available inventory units (realtime)
+# TYPE hcr_inventory_available gauge
+hcr_inventory_available{application="ms-order",resource_id="concert-003",} 70.0
+# HELP disk_free_bytes Usable space for path
+# TYPE disk_free_bytes gauge
+disk_free_bytes{application="ms-order",path="C:\\Users\\Admin\\Documents\\HUST\\2025.2\\io.hrc\\hcr-product\\ms-order\\.",} 1.0218668032E10
+# HELP executor_completed_tasks_total The approximate total number of tasks that have completed execution
+# TYPE executor_completed_tasks_total counter
+executor_completed_tasks_total{application="ms-order",name="applicationTaskExecutor",} 0.0
+executor_completed_tasks_total{application="ms-order",name="taskScheduler",} 2.0
+# HELP process_cpu_usage The "recent cpu usage" for the Java Virtual Machine process
+# TYPE process_cpu_usage gauge
+process_cpu_usage{application="ms-order",} 0.005971136462613922
+# HELP hikaricp_connections_usage_seconds Connection usage time
+# TYPE hikaricp_connections_usage_seconds summary
+hikaricp_connections_usage_seconds_count{application="ms-order",pool="HikariPool-1",} 551.0
+hikaricp_connections_usage_seconds_sum{application="ms-order",pool="HikariPool-1",} 8.91
+# HELP hikaricp_connections_usage_seconds_max Connection usage time
+# TYPE hikaricp_connections_usage_seconds_max gauge
+hikaricp_connections_usage_seconds_max{application="ms-order",pool="HikariPool-1",} 0.205
+# HELP jvm_memory_max_bytes The maximum amount of memory in bytes that can be used for memory management
+# TYPE jvm_memory_max_bytes gauge
+jvm_memory_max_bytes{application="ms-order",area="nonheap",id="Compressed Class Space",} 1.073741824E9
+jvm_memory_max_bytes{application="ms-order",area="heap",id="G1 Survivor Space",} -1.0
+jvm_memory_max_bytes{application="ms-order",area="heap",id="G1 Eden Space",} -1.0
+jvm_memory_max_bytes{application="ms-order",area="nonheap",id="Metaspace",} -1.0
+jvm_memory_max_bytes{application="ms-order",area="heap",id="G1 Old Gen",} 3.164602368E9
+jvm_memory_max_bytes{application="ms-order",area="nonheap",id="CodeCache",} 5.0331648E7
+# HELP http_server_requests_seconds  
+# TYPE http_server_requests_seconds summary
+http_server_requests_seconds_count{application="ms-order",error="none",exception="none",method="POST",outcome="SUCCESS",status="202",uri="/orders",} 547.0
+http_server_requests_seconds_sum{application="ms-order",error="none",exception="none",method="POST",outcome="SUCCESS",status="202",uri="/orders",} 61.1357401
+http_server_requests_seconds_count{application="ms-order",error="none",exception="none",method="GET",outcome="SUCCESS",status="200",uri="/actuator/prometheus",} 41.0
+http_server_requests_seconds_sum{application="ms-order",error="none",exception="none",method="GET",outcome="SUCCESS",status="200",uri="/actuator/prometheus",} 4.2139564
+http_server_requests_seconds_count{application="ms-order",error="none",exception="none",method="POST",outcome="CLIENT_ERROR",status="422",uri="/orders",} 14429.0
+http_server_requests_seconds_sum{application="ms-order",error="none",exception="none",method="POST",outcome="CLIENT_ERROR",status="422",uri="/orders",} 8036.2920395
+# HELP http_server_requests_seconds_max  
+# TYPE http_server_requests_seconds_max gauge
+http_server_requests_seconds_max{application="ms-order",error="none",exception="none",method="POST",outcome="SUCCESS",status="202",uri="/orders",} 2.1160238
+http_server_requests_seconds_max{application="ms-order",error="none",exception="none",method="GET",outcome="SUCCESS",status="200",uri="/actuator/prometheus",} 0.2376858
+http_server_requests_seconds_max{application="ms-order",error="none",exception="none",method="POST",outcome="CLIENT_ERROR",status="422",uri="/orders",} 2.221587
+# HELP jvm_threads_live_threads The current number of live threads including both daemon and non-daemon threads
+# TYPE jvm_threads_live_threads gauge
+jvm_threads_live_threads{application="ms-order",} 472.0
+# HELP executor_queue_remaining_tasks The number of additional elements that this queue can ideally accept without blocking
+# TYPE executor_queue_remaining_tasks gauge
+executor_queue_remaining_tasks{application="ms-order",name="applicationTaskExecutor",} 2.147483647E9
+executor_queue_remaining_tasks{application="ms-order",name="taskScheduler",} 2.147483647E9
+# HELP hikaricp_connections_min Min connections
+# TYPE hikaricp_connections_min gauge
+hikaricp_connections_min{application="ms-order",pool="HikariPool-1",} 10.0
+# HELP hikaricp_connections_max Max connections
+# TYPE hikaricp_connections_max gauge
+hikaricp_connections_max{application="ms-order",pool="HikariPool-1",} 50.0
+# HELP jvm_gc_pause_seconds Time spent in GC pause
+# TYPE jvm_gc_pause_seconds summary
+jvm_gc_pause_seconds_count{action="end of minor GC",application="ms-order",cause="G1 Evacuation Pause",gc="G1 Young Generation",} 28.0
+jvm_gc_pause_seconds_sum{action="end of minor GC",application="ms-order",cause="G1 Evacuation Pause",gc="G1 Young Generation",} 0.256
+jvm_gc_pause_seconds_count{action="end of minor GC",application="ms-order",cause="CodeCache GC Threshold",gc="G1 Young Generation",} 2.0
+jvm_gc_pause_seconds_sum{action="end of minor GC",application="ms-order",cause="CodeCache GC Threshold",gc="G1 Young Generation",} 0.007
+# HELP jvm_gc_pause_seconds_max Time spent in GC pause
+# TYPE jvm_gc_pause_seconds_max gauge
+jvm_gc_pause_seconds_max{action="end of minor GC",application="ms-order",cause="G1 Evacuation Pause",gc="G1 Young Generation",} 0.015
+jvm_gc_pause_seconds_max{action="end of minor GC",application="ms-order",cause="CodeCache GC Threshold",gc="G1 Young Generation",} 0.004
+# HELP executor_pool_max_threads The maximum allowed number of threads in the pool
+# TYPE executor_pool_max_threads gauge
+executor_pool_max_threads{application="ms-order",name="applicationTaskExecutor",} 2.147483647E9
+executor_pool_max_threads{application="ms-order",name="taskScheduler",} 2.147483647E9
+# HELP spring_kafka_template_seconds_max KafkaTemplate Timer
+# TYPE spring_kafka_template_seconds_max gauge
+spring_kafka_template_seconds_max{application="ms-order",exception="none",name="hcrKafkaTemplate",result="success",} 0.1725534
+# HELP spring_kafka_template_seconds KafkaTemplate Timer
+# TYPE spring_kafka_template_seconds summary
+spring_kafka_template_seconds_count{application="ms-order",exception="none",name="hcrKafkaTemplate",result="success",} 1759.0
+spring_kafka_template_seconds_sum{application="ms-order",exception="none",name="hcrKafkaTemplate",result="success",} 30.9209143
+# HELP hcr_saga_cancelled_total Total saga transactions cancelled (with reason)
+# TYPE hcr_saga_cancelled_total counter
+hcr_saga_cancelled_total{application="ms-order",reason="PAYMENT_FAILED",resource_id="concert-003",} 117.0
+hcr_saga_cancelled_total{application="ms-order",reason="INSUFFICIENT_INVENTORY",resource_id="concert-003",} 14429.0
+# HELP logback_events_total Number of log events that were enabled by the effective log level
+# TYPE logback_events_total counter
+logback_events_total{application="ms-order",level="error",} 0.0
+logback_events_total{application="ms-order",level="trace",} 0.0
+logback_events_total{application="ms-order",level="warn",} 1876.0
+logback_events_total{application="ms-order",level="info",} 45515.0
+logback_events_total{application="ms-order",level="debug",} 0.0
+# HELP tomcat_sessions_rejected_sessions_total  
+# TYPE tomcat_sessions_rejected_sessions_total counter
+tomcat_sessions_rejected_sessions_total{application="ms-order",} 0.0
+# HELP jvm_compilation_time_ms_total The approximate accumulated elapsed time spent in compilation
+# TYPE jvm_compilation_time_ms_total counter
+jvm_compilation_time_ms_total{application="ms-order",compiler="HotSpot 64-Bit Tiered Compilers",} 4554.0
+# HELP hcr_saga_compensated_total Total successful saga compensations (rollback completed)
+# TYPE hcr_saga_compensated_total counter
+hcr_saga_compensated_total{application="ms-order",reason="payment",resource_id="concert-003",} 117.0
+# HELP hcr_reservation_failures_total Total reservation failures by reason
+# TYPE hcr_reservation_failures_total counter
+hcr_reservation_failures_total{application="ms-order",reason="INSUFFICIENT_INVENTORY",resource_id="concert-003",strategy="redis-atomic",} 14429.0
+# HELP ms_order_orchestrator_duration_ms_seconds orchestrator.process() = catalog lookup + reserve + saga save + publish
+# TYPE ms_order_orchestrator_duration_ms_seconds summary
+ms_order_orchestrator_duration_ms_seconds{application="ms-order",quantile="0.5",} 0.0
+ms_order_orchestrator_duration_ms_seconds{application="ms-order",quantile="0.95",} 0.0
+ms_order_orchestrator_duration_ms_seconds{application="ms-order",quantile="0.99",} 0.0
+ms_order_orchestrator_duration_ms_seconds_count{application="ms-order",} 14976.0
+ms_order_orchestrator_duration_ms_seconds_sum{application="ms-order",} 4593.4387692
+# HELP ms_order_orchestrator_duration_ms_seconds_max orchestrator.process() = catalog lookup + reserve + saga save + publish
+# TYPE ms_order_orchestrator_duration_ms_seconds_max gauge
+ms_order_orchestrator_duration_ms_seconds_max{application="ms-order",} 1.8871836
+# HELP jvm_threads_states_threads The current number of threads
+# TYPE jvm_threads_states_threads gauge
+jvm_threads_states_threads{application="ms-order",state="timed-waiting",} 410.0
+jvm_threads_states_threads{application="ms-order",state="terminated",} 0.0
+jvm_threads_states_threads{application="ms-order",state="runnable",} 43.0
+jvm_threads_states_threads{application="ms-order",state="new",} 0.0
+jvm_threads_states_threads{application="ms-order",state="waiting",} 19.0
+jvm_threads_states_threads{application="ms-order",state="blocked",} 0.0
+# HELP jdbc_connections_idle Number of established but idle connections.
+# TYPE jdbc_connections_idle gauge
+jdbc_connections_idle{application="ms-order",name="dataSource",} 10.0
+# HELP tomcat_sessions_active_current_sessions  
+# TYPE tomcat_sessions_active_current_sessions gauge
+tomcat_sessions_active_current_sessions{application="ms-order",} 0.0
+# HELP executor_queued_tasks The approximate number of tasks that are queued for execution
+# TYPE executor_queued_tasks gauge
+executor_queued_tasks{application="ms-order",name="applicationTaskExecutor",} 0.0
+executor_queued_tasks{application="ms-order",name="taskScheduler",} 2.0
+# HELP disk_total_bytes Total space for path
+# TYPE disk_total_bytes gauge
+disk_total_bytes{application="ms-order",path="C:\\Users\\Admin\\Documents\\HUST\\2025.2\\io.hrc\\hcr-product\\ms-order\\.",} 1.60394375168E11
+# HELP hikaricp_connections_pending Pending threads
+# TYPE hikaricp_connections_pending gauge
+hikaricp_connections_pending{application="ms-order",pool="HikariPool-1",} 0.0
+# HELP hcr_reservation_attempts_total Total reservation attempts (success + failure)
+# TYPE hcr_reservation_attempts_total counter
+hcr_reservation_attempts_total{application="ms-order",resource_id="concert-003",strategy="redis-atomic",} 14976.0
+# HELP hikaricp_connections_idle Idle connections
+# TYPE hikaricp_connections_idle gauge
+hikaricp_connections_idle{application="ms-order",pool="HikariPool-1",} 10.0
+# HELP hikaricp_connections Total connections
+# TYPE hikaricp_connections gauge
+hikaricp_connections{application="ms-order",pool="HikariPool-1",} 10.0
+# HELP tomcat_sessions_alive_max_seconds  
+# TYPE tomcat_sessions_alive_max_seconds gauge
+tomcat_sessions_alive_max_seconds{application="ms-order",} 0.0
+# HELP jvm_memory_committed_bytes The amount of memory in bytes that is committed for the Java virtual machine to use
+# TYPE jvm_memory_committed_bytes gauge
+jvm_memory_committed_bytes{application="ms-order",area="nonheap",id="Compressed Class Space",} 1.5466496E7
+jvm_memory_committed_bytes{application="ms-order",area="heap",id="G1 Survivor Space",} 2097152.0
+jvm_memory_committed_bytes{application="ms-order",area="heap",id="G1 Eden Space",} 9.6468992E7
+jvm_memory_committed_bytes{application="ms-order",area="nonheap",id="Metaspace",} 1.08396544E8
+jvm_memory_committed_bytes{application="ms-order",area="heap",id="G1 Old Gen",} 1.40509184E8
+jvm_memory_committed_bytes{application="ms-order",area="nonheap",id="CodeCache",} 2.3658496E7
+# HELP system_cpu_count The number of processors available to the Java virtual machine
+# TYPE system_cpu_count gauge
+system_cpu_count{application="ms-order",} 4.0
+# HELP system_cpu_usage The "recent cpu usage" of the system the application is running in
+# TYPE system_cpu_usage gauge
+system_cpu_usage{application="ms-order",} 0.38302451376584346
+# HELP hikaricp_connections_acquire_seconds Connection acquire time
+# TYPE hikaricp_connections_acquire_seconds summary
+hikaricp_connections_acquire_seconds_count{application="ms-order",pool="HikariPool-1",} 551.0
+hikaricp_connections_acquire_seconds_sum{application="ms-order",pool="HikariPool-1",} 0.5513802
+# HELP hikaricp_connections_acquire_seconds_max Connection acquire time
+# TYPE hikaricp_connections_acquire_seconds_max gauge
+hikaricp_connections_acquire_seconds_max{application="ms-order",pool="HikariPool-1",} 0.0685696
+# HELP jvm_gc_memory_allocated_bytes_total Incremented for an increase in the size of the (young) heap memory pool after one GC to before the next
+# TYPE jvm_gc_memory_allocated_bytes_total counter
+jvm_gc_memory_allocated_bytes_total{application="ms-order",} 1.478492152E9
+# HELP hikaricp_connections_timeout_total Connection timeout total count
+# TYPE hikaricp_connections_timeout_total counter
+hikaricp_connections_timeout_total{application="ms-order",pool="HikariPool-1",} 0.0
+# HELP jdbc_connections_active Current number of active connections that have been allocated from the data source.
+# TYPE jdbc_connections_active gauge
+jdbc_connections_active{application="ms-order",name="dataSource",} 0.0
+# HELP spring_data_repository_invocations_seconds_max Duration of repository invocations
+# TYPE spring_data_repository_invocations_seconds_max gauge
+spring_data_repository_invocations_seconds_max{application="ms-order",exception="None",method="findAll",repository="ConcertTicketRepository",state="SUCCESS",} 0.0
+spring_data_repository_invocations_seconds_max{application="ms-order",exception="None",method="findDuplicateIdempotencyKeys",repository="TicketOrderRepository",state="SUCCESS",} 0.0
+spring_data_repository_invocations_seconds_max{application="ms-order",exception="None",method="findByStatusAndUpdatedAtBefore",repository="TicketOrderRepository",state="SUCCESS",} 0.0
+spring_data_repository_invocations_seconds_max{application="ms-order",exception="None",method="deleteByProcessedAtBefore",repository="ProcessedEventRepository",state="SUCCESS",} 0.0368171
+spring_data_repository_invocations_seconds_max{application="ms-order",exception="None",method="save",repository="TicketOrderRepository",state="SUCCESS",} 0.0850888
+# HELP spring_data_repository_invocations_seconds Duration of repository invocations
+# TYPE spring_data_repository_invocations_seconds summary
+spring_data_repository_invocations_seconds_count{application="ms-order",exception="None",method="findAll",repository="ConcertTicketRepository",state="SUCCESS",} 1.0
+spring_data_repository_invocations_seconds_sum{application="ms-order",exception="None",method="findAll",repository="ConcertTicketRepository",state="SUCCESS",} 0.1163341
+spring_data_repository_invocations_seconds_count{application="ms-order",exception="None",method="findDuplicateIdempotencyKeys",repository="TicketOrderRepository",state="SUCCESS",} 1.0
+spring_data_repository_invocations_seconds_sum{application="ms-order",exception="None",method="findDuplicateIdempotencyKeys",repository="TicketOrderRepository",state="SUCCESS",} 0.0159952
+spring_data_repository_invocations_seconds_count{application="ms-order",exception="None",method="findByStatusAndUpdatedAtBefore",repository="TicketOrderRepository",state="SUCCESS",} 2.0
+spring_data_repository_invocations_seconds_sum{application="ms-order",exception="None",method="findByStatusAndUpdatedAtBefore",repository="TicketOrderRepository",state="SUCCESS",} 0.0792704
+spring_data_repository_invocations_seconds_count{application="ms-order",exception="None",method="deleteByProcessedAtBefore",repository="ProcessedEventRepository",state="SUCCESS",} 1.0
+spring_data_repository_invocations_seconds_sum{application="ms-order",exception="None",method="deleteByProcessedAtBefore",repository="ProcessedEventRepository",state="SUCCESS",} 0.0368171
+spring_data_repository_invocations_seconds_count{application="ms-order",exception="None",method="save",repository="TicketOrderRepository",state="SUCCESS",} 547.0
+spring_data_repository_invocations_seconds_sum{application="ms-order",exception="None",method="save",repository="TicketOrderRepository",state="SUCCESS",} 2.8512255
+# HELP spring_kafka_listener_seconds_max Kafka Listener Timer
+# TYPE spring_kafka_listener_seconds_max gauge
+spring_kafka_listener_seconds_max{application="ms-order",exception="none",name="org.springframework.kafka.KafkaListenerEndpointContainer#0-0",result="success",} 2.3955591
+# HELP spring_kafka_listener_seconds Kafka Listener Timer
+# TYPE spring_kafka_listener_seconds summary
+spring_kafka_listener_seconds_count{application="ms-order",exception="none",name="org.springframework.kafka.KafkaListenerEndpointContainer#0-0",result="success",} 2306.0
+spring_kafka_listener_seconds_sum{application="ms-order",exception="none",name="org.springframework.kafka.KafkaListenerEndpointContainer#0-0",result="success",} 54.8225767
+# HELP hcr_event_consumed_duration_ms_seconds_max Event handler processing duration
+# TYPE hcr_event_consumed_duration_ms_seconds_max gauge
+hcr_event_consumed_duration_ms_seconds_max{application="ms-order",event_type="PaymentSucceededEvent",} 0.292
+hcr_event_consumed_duration_ms_seconds_max{application="ms-order",event_type="PaymentFailedEvent",} 2.385
+# HELP hcr_event_consumed_duration_ms_seconds Event handler processing duration
+# TYPE hcr_event_consumed_duration_ms_seconds summary
+hcr_event_consumed_duration_ms_seconds_count{application="ms-order",event_type="PaymentSucceededEvent",} 430.0
+hcr_event_consumed_duration_ms_seconds_sum{application="ms-order",event_type="PaymentSucceededEvent",} 13.365
+hcr_event_consumed_duration_ms_seconds_count{application="ms-order",event_type="PaymentFailedEvent",} 117.0
+hcr_event_consumed_duration_ms_seconds_sum{application="ms-order",event_type="PaymentFailedEvent",} 27.139
+# HELP jvm_gc_max_data_size_bytes Max size of long-lived heap memory pool
+# TYPE jvm_gc_max_data_size_bytes gauge
+jvm_gc_max_data_size_bytes{application="ms-order",} 3.164602368E9
+# HELP hcr_reconciliation_duration_ms_seconds_max Reconciliation cycle end-to-end duration
+# TYPE hcr_reconciliation_duration_ms_seconds_max gauge
+hcr_reconciliation_duration_ms_seconds_max{application="ms-order",} 0.0
+# HELP hcr_reconciliation_duration_ms_seconds Reconciliation cycle end-to-end duration
+# TYPE hcr_reconciliation_duration_ms_seconds summary
+hcr_reconciliation_duration_ms_seconds_count{application="ms-order",} 1.0
+hcr_reconciliation_duration_ms_seconds_sum{application="ms-order",} 0.502
+# HELP hcr_reservation_duration_ms_seconds_max Reservation processing duration in milliseconds
+# TYPE hcr_reservation_duration_ms_seconds_max gauge
+hcr_reservation_duration_ms_seconds_max{application="ms-order",outcome="success",resource_id="concert-003",strategy="redis-atomic",} 0.462
+# HELP hcr_reservation_duration_ms_seconds Reservation processing duration in milliseconds
+# TYPE hcr_reservation_duration_ms_seconds summary
+hcr_reservation_duration_ms_seconds_count{application="ms-order",outcome="success",resource_id="concert-003",strategy="redis-atomic",} 547.0
+hcr_reservation_duration_ms_seconds_sum{application="ms-order",outcome="success",resource_id="concert-003",strategy="redis-atomic",} 13.211
+# HELP jvm_memory_used_bytes The amount of used memory
+# TYPE jvm_memory_used_bytes gauge
+jvm_memory_used_bytes{application="ms-order",area="nonheap",id="Compressed Class Space",} 1.5075016E7
+jvm_memory_used_bytes{application="ms-order",area="heap",id="G1 Survivor Space",} 1343424.0
+jvm_memory_used_bytes{application="ms-order",area="heap",id="G1 Eden Space",} 5.0331648E7
+jvm_memory_used_bytes{application="ms-order",area="nonheap",id="Metaspace",} 1.07479192E8
+jvm_memory_used_bytes{application="ms-order",area="heap",id="G1 Old Gen",} 1.28601352E8
+jvm_memory_used_bytes{application="ms-order",area="nonheap",id="CodeCache",} 1.7073536E7
+# HELP jvm_threads_started_threads_total The total number of application threads started in the JVM
+# TYPE jvm_threads_started_threads_total counter
+jvm_threads_started_threads_total{application="ms-order",} 476.0
+# HELP jvm_classes_unloaded_classes_total The total number of classes unloaded since the Java virtual machine has started execution
+# TYPE jvm_classes_unloaded_classes_total counter
+jvm_classes_unloaded_classes_total{application="ms-order",} 279.0
+# HELP hcr_event_published_total Total events successfully published to broker
+# TYPE hcr_event_published_total counter
+hcr_event_published_total{adapter="kafka",application="ms-order",event_type="ResourceReleasedEvent",} 117.0
+hcr_event_published_total{adapter="kafka",application="ms-order",event_type="OrderCancelledEvent",} 117.0
+hcr_event_published_total{adapter="kafka",application="ms-order",event_type="OrderConfirmedEvent",} 430.0
+hcr_event_published_total{adapter="kafka",application="ms-order",event_type="ReconciliationStartedEvent",} 1.0
+hcr_event_published_total{adapter="kafka",application="ms-order",event_type="PaymentRequestedEvent",} 547.0
+hcr_event_published_total{adapter="kafka",application="ms-order",event_type="ResourceReservedEvent",} 547.0
+# HELP hcr_release_total Total successful inventory releases
+# TYPE hcr_release_total counter
+hcr_release_total{application="ms-order",resource_id="concert-003",strategy="redis-atomic",} 117.0
+# HELP hcr_oversell_prevented_total Oversell attempts rejected by framework — should always be > 0 under load
+# TYPE hcr_oversell_prevented_total counter
+hcr_oversell_prevented_total{application="ms-order",resource_id="concert-003",} 14429.0
+# HELP hcr_reconciliation_run_total Total reconciliation cycles completed
+# TYPE hcr_reconciliation_run_total counter
+hcr_reconciliation_run_total{application="ms-order",has_errors="false",} 1.0
+# HELP jvm_gc_live_data_size_bytes Size of long-lived heap memory pool after reclamation
+# TYPE jvm_gc_live_data_size_bytes gauge
+jvm_gc_live_data_size_bytes{application="ms-order",} 1.28601352E8
+# HELP process_uptime_seconds The uptime of the Java virtual machine
+# TYPE process_uptime_seconds gauge
+process_uptime_seconds{application="ms-order",} 214.769
+# HELP jdbc_connections_max Maximum number of active connections that can be allocated at the same time.
+# TYPE jdbc_connections_max gauge
+jdbc_connections_max{application="ms-order",name="dataSource",} 50.0
+# HELP ms_order_idempotency_set_duration_ms_seconds Redis SET for storing orderId on idempotency key
+# TYPE ms_order_idempotency_set_duration_ms_seconds summary
+ms_order_idempotency_set_duration_ms_seconds{application="ms-order",quantile="0.5",} 0.0
+ms_order_idempotency_set_duration_ms_seconds{application="ms-order",quantile="0.95",} 0.0
+ms_order_idempotency_set_duration_ms_seconds{application="ms-order",quantile="0.99",} 0.0
+ms_order_idempotency_set_duration_ms_seconds_count{application="ms-order",} 547.0
+ms_order_idempotency_set_duration_ms_seconds_sum{application="ms-order",} 6.8384887
+# HELP ms_order_idempotency_set_duration_ms_seconds_max Redis SET for storing orderId on idempotency key
+# TYPE ms_order_idempotency_set_duration_ms_seconds_max gauge
+ms_order_idempotency_set_duration_ms_seconds_max{application="ms-order",} 0.4678752
+# HELP executor_active_threads The approximate number of threads that are actively executing tasks
+# TYPE executor_active_threads gauge
+executor_active_threads{application="ms-order",name="applicationTaskExecutor",} 0.0
+executor_active_threads{application="ms-order",name="taskScheduler",} 0.0
+# HELP jdbc_connections_min Minimum number of idle connections in the pool.
+# TYPE jdbc_connections_min gauge
+jdbc_connections_min{application="ms-order",name="dataSource",} 10.0
+# HELP application_started_time_seconds Time taken to start the application
+# TYPE application_started_time_seconds gauge
+application_started_time_seconds{application="ms-order",main_application_class="io.hrc.product.order.MsOrderApplication",} 9.287
+# HELP hikaricp_connections_creation_seconds_max Connection creation time
+# TYPE hikaricp_connections_creation_seconds_max gauge
+hikaricp_connections_creation_seconds_max{application="ms-order",pool="HikariPool-1",} 0.0
+# HELP hikaricp_connections_creation_seconds Connection creation time
+# TYPE hikaricp_connections_creation_seconds summary
+hikaricp_connections_creation_seconds_count{application="ms-order",pool="HikariPool-1",} 0.0
+hikaricp_connections_creation_seconds_sum{application="ms-order",pool="HikariPool-1",} 0.0
+# HELP jvm_gc_concurrent_phase_time_seconds Time spent in concurrent phase
+# TYPE jvm_gc_concurrent_phase_time_seconds summary
+jvm_gc_concurrent_phase_time_seconds_count{action="end of concurrent GC pause",application="ms-order",cause="No GC",gc="G1 Concurrent GC",} 22.0
+jvm_gc_concurrent_phase_time_seconds_sum{action="end of concurrent GC pause",application="ms-order",cause="No GC",gc="G1 Concurrent GC",} 0.115
+# HELP jvm_gc_concurrent_phase_time_seconds_max Time spent in concurrent phase
+# TYPE jvm_gc_concurrent_phase_time_seconds_max gauge
+jvm_gc_concurrent_phase_time_seconds_max{action="end of concurrent GC pause",application="ms-order",cause="No GC",gc="G1 Concurrent GC",} 0.032
+# HELP jvm_info JVM version info
+# TYPE jvm_info gauge
+jvm_info{application="ms-order",runtime="Java(TM) SE Runtime Environment",vendor="Oracle Corporation",version="21.0.10+8-LTS-217",} 1.0
+# HELP ms_order_path202_total_duration_ms_seconds_max End-to-end POST /orders duration (success path)
+# TYPE ms_order_path202_total_duration_ms_seconds_max gauge
+ms_order_path202_total_duration_ms_seconds_max{application="ms-order",} 1.7101361
+# HELP ms_order_path202_total_duration_ms_seconds End-to-end POST /orders duration (success path)
+# TYPE ms_order_path202_total_duration_ms_seconds summary
+ms_order_path202_total_duration_ms_seconds{application="ms-order",quantile="0.5",} 0.0
+ms_order_path202_total_duration_ms_seconds{application="ms-order",quantile="0.95",} 0.0
+ms_order_path202_total_duration_ms_seconds{application="ms-order",quantile="0.99",} 0.0
+ms_order_path202_total_duration_ms_seconds_count{application="ms-order",} 547.0
+ms_order_path202_total_duration_ms_seconds_sum{application="ms-order",} 59.2077693
+# HELP hikaricp_connections_active Active connections
+# TYPE hikaricp_connections_active gauge
+hikaricp_connections_active{application="ms-order",pool="HikariPool-1",} 0.0
+# HELP tomcat_sessions_created_sessions_total  
+# TYPE tomcat_sessions_created_sessions_total counter
+tomcat_sessions_created_sessions_total{application="ms-order",} 0.0
+# HELP jvm_classes_loaded_classes The number of classes that are currently loaded in the Java virtual machine
+# TYPE jvm_classes_loaded_classes gauge
+jvm_classes_loaded_classes{application="ms-order",} 22230.0
+# HELP tasks_scheduled_execution_seconds  
+# TYPE tasks_scheduled_execution_seconds summary
+tasks_scheduled_execution_seconds_count{application="ms-order",code_function="runReconciliation",code_namespace="io.hrc.product.order.reconciliation.TicketReconciliationService",error="none",exception="none",outcome="SUCCESS",} 1.0
+tasks_scheduled_execution_seconds_sum{application="ms-order",code_function="runReconciliation",code_namespace="io.hrc.product.order.reconciliation.TicketReconciliationService",error="none",exception="none",outcome="SUCCESS",} 0.5242536
+tasks_scheduled_execution_seconds_count{application="ms-order",code_function="scheduledCleanup",code_namespace="io.hrc.inventory.persistence.ProcessedEventsCleanupJob",error="none",exception="none",outcome="SUCCESS",} 1.0
+tasks_scheduled_execution_seconds_sum{application="ms-order",code_function="scheduledCleanup",code_namespace="io.hrc.inventory.persistence.ProcessedEventsCleanupJob",error="none",exception="none",outcome="SUCCESS",} 0.0443338
+# HELP tasks_scheduled_execution_seconds_max  
+# TYPE tasks_scheduled_execution_seconds_max gauge
+tasks_scheduled_execution_seconds_max{application="ms-order",code_function="runReconciliation",code_namespace="io.hrc.product.order.reconciliation.TicketReconciliationService",error="none",exception="none",outcome="SUCCESS",} 0.0
+tasks_scheduled_execution_seconds_max{application="ms-order",code_function="scheduledCleanup",code_namespace="io.hrc.inventory.persistence.ProcessedEventsCleanupJob",error="none",exception="none",outcome="SUCCESS",} 0.0443338
+# HELP jvm_buffer_total_capacity_bytes An estimate of the total capacity of the buffers in this pool
+# TYPE jvm_buffer_total_capacity_bytes gauge
+jvm_buffer_total_capacity_bytes{application="ms-order",id="mapped",} 0.0
+jvm_buffer_total_capacity_bytes{application="ms-order",id="direct",} 3.7114072E7
+jvm_buffer_total_capacity_bytes{application="ms-order",id="mapped - 'non-volatile memory'",} 0.0
+# HELP jvm_buffer_memory_used_bytes An estimate of the memory that the Java virtual machine is using for this buffer pool
+# TYPE jvm_buffer_memory_used_bytes gauge
+jvm_buffer_memory_used_bytes{application="ms-order",id="mapped",} 0.0
+jvm_buffer_memory_used_bytes{application="ms-order",id="direct",} 3.7114073E7
+jvm_buffer_memory_used_bytes{application="ms-order",id="mapped - 'non-volatile memory'",} 0.0
+# HELP hcr_depleted_events_total Times inventory reached zero (fully depleted)
+# TYPE hcr_depleted_events_total counter
+hcr_depleted_events_total{application="ms-order",resource_id="concert-003",} 48.0
+# HELP hcr_saga_started_total Total saga transactions started (post-validation)
+# TYPE hcr_saga_started_total counter
+hcr_saga_started_total{application="ms-order",resource_id="concert-003",} 14976.0
+# HELP application_ready_time_seconds Time taken for the application to be ready to service requests
+# TYPE application_ready_time_seconds gauge
+application_ready_time_seconds{application="ms-order",main_application_class="io.hrc.product.order.MsOrderApplication",} 9.296
+# HELP jvm_memory_usage_after_gc_percent The percentage of long-lived heap pool used after the last GC event, in the range [0..1]
+# TYPE jvm_memory_usage_after_gc_percent gauge
+jvm_memory_usage_after_gc_percent{application="ms-order",area="heap",pool="long-lived",} 0.04063744415424769
+# HELP ms_order_catalog_lookup_duration_ms_seconds ConcertTicket catalog lookup per POST /orders (in-memory cache after Step 2)
+# TYPE ms_order_catalog_lookup_duration_ms_seconds summary
+ms_order_catalog_lookup_duration_ms_seconds{application="ms-order",quantile="0.5",} 0.0
+ms_order_catalog_lookup_duration_ms_seconds{application="ms-order",quantile="0.95",} 0.0
+ms_order_catalog_lookup_duration_ms_seconds{application="ms-order",quantile="0.99",} 0.0
+ms_order_catalog_lookup_duration_ms_seconds_count{application="ms-order",} 14976.0
+ms_order_catalog_lookup_duration_ms_seconds_sum{application="ms-order",} 0.027563
+# HELP ms_order_catalog_lookup_duration_ms_seconds_max ConcertTicket catalog lookup per POST /orders (in-memory cache after Step 2)
+# TYPE ms_order_catalog_lookup_duration_ms_seconds_max gauge
+ms_order_catalog_lookup_duration_ms_seconds_max{application="ms-order",} 0.0137944
+# HELP tasks_scheduled_execution_active_seconds_max  
+# TYPE tasks_scheduled_execution_active_seconds_max gauge
+tasks_scheduled_execution_active_seconds_max{application="ms-order",code_function="scheduledCleanup",code_namespace="io.hrc.inventory.persistence.ProcessedEventsCleanupJob",exception="none",outcome="UNKNOWN",} 0.0
+tasks_scheduled_execution_active_seconds_max{application="ms-order",code_function="runReconciliation",code_namespace="io.hrc.product.order.reconciliation.TicketReconciliationService",exception="none",outcome="UNKNOWN",} 0.0
+# HELP tasks_scheduled_execution_active_seconds  
+# TYPE tasks_scheduled_execution_active_seconds summary
+tasks_scheduled_execution_active_seconds_active_count{application="ms-order",code_function="scheduledCleanup",code_namespace="io.hrc.inventory.persistence.ProcessedEventsCleanupJob",exception="none",outcome="UNKNOWN",} 0.0
+tasks_scheduled_execution_active_seconds_duration_sum{application="ms-order",code_function="scheduledCleanup",code_namespace="io.hrc.inventory.persistence.ProcessedEventsCleanupJob",exception="none",outcome="UNKNOWN",} 0.0
+tasks_scheduled_execution_active_seconds_active_count{application="ms-order",code_function="runReconciliation",code_namespace="io.hrc.product.order.reconciliation.TicketReconciliationService",exception="none",outcome="UNKNOWN",} 0.0
+tasks_scheduled_execution_active_seconds_duration_sum{application="ms-order",code_function="runReconciliation",code_namespace="io.hrc.product.order.reconciliation.TicketReconciliationService",exception="none",outcome="UNKNOWN",} 0.0
+# HELP http_server_requests_active_seconds_max  
+# TYPE http_server_requests_active_seconds_max gauge
+http_server_requests_active_seconds_max{application="ms-order",exception="none",method="POST",outcome="SUCCESS",status="200",uri="UNKNOWN",} 0.0
+http_server_requests_active_seconds_max{application="ms-order",exception="none",method="GET",outcome="SUCCESS",status="200",uri="UNKNOWN",} 0.0365686
+# HELP http_server_requests_active_seconds  
+# TYPE http_server_requests_active_seconds summary
+http_server_requests_active_seconds_active_count{application="ms-order",exception="none",method="POST",outcome="SUCCESS",status="200",uri="UNKNOWN",} 0.0
+http_server_requests_active_seconds_duration_sum{application="ms-order",exception="none",method="POST",outcome="SUCCESS",status="200",uri="UNKNOWN",} 0.0
+http_server_requests_active_seconds_active_count{application="ms-order",exception="none",method="GET",outcome="SUCCESS",status="200",uri="UNKNOWN",} 1.0
+http_server_requests_active_seconds_duration_sum{application="ms-order",exception="none",method="GET",outcome="SUCCESS",status="200",uri="UNKNOWN",} 0.0365666
+# HELP jvm_gc_overhead_percent An approximation of the percent of CPU time used by GC activities over the last lookback period or since monitoring began, whichever is shorter, in the range [0..1]
+# TYPE jvm_gc_overhead_percent gauge
+jvm_gc_overhead_percent{application="ms-order",} 0.0012797641742839435
+# HELP jvm_threads_peak_threads The peak live thread count since the Java virtual machine started or peak was reset
+# TYPE jvm_threads_peak_threads gauge
+jvm_threads_peak_threads{application="ms-order",} 472.0
+# HELP jvm_threads_daemon_threads The current number of live daemon threads
+# TYPE jvm_threads_daemon_threads gauge
+jvm_threads_daemon_threads{application="ms-order",} 416.0
+# HELP ms_order_idempotency_claim_duration_ms_seconds_max Redis SETNX for idempotency claim
+# TYPE ms_order_idempotency_claim_duration_ms_seconds_max gauge
+ms_order_idempotency_claim_duration_ms_seconds_max{application="ms-order",} 0.7808357
+# HELP ms_order_idempotency_claim_duration_ms_seconds Redis SETNX for idempotency claim
+# TYPE ms_order_idempotency_claim_duration_ms_seconds summary
+ms_order_idempotency_claim_duration_ms_seconds{application="ms-order",quantile="0.5",} 0.0
+ms_order_idempotency_claim_duration_ms_seconds{application="ms-order",quantile="0.95",} 0.0
+ms_order_idempotency_claim_duration_ms_seconds{application="ms-order",quantile="0.99",} 0.0
+ms_order_idempotency_claim_duration_ms_seconds_count{application="ms-order",} 14976.0
+ms_order_idempotency_claim_duration_ms_seconds_sum{application="ms-order",} 1712.0721953
+# HELP executor_pool_size_threads The current number of threads in the pool
+# TYPE executor_pool_size_threads gauge
+executor_pool_size_threads{application="ms-order",name="applicationTaskExecutor",} 0.0
+executor_pool_size_threads{application="ms-order",name="taskScheduler",} 1.0
+# HELP tomcat_sessions_active_max_sessions  
+# TYPE tomcat_sessions_active_max_sessions gauge
+tomcat_sessions_active_max_sessions{application="ms-order",} 0.0
+# HELP jvm_gc_memory_promoted_bytes_total Count of positive increases in the size of the old generation memory pool before GC to after GC
+# TYPE jvm_gc_memory_promoted_bytes_total counter
+jvm_gc_memory_promoted_bytes_total{application="ms-order",} 9.460104E7
+# HELP process_start_time_seconds Start time of the process since unix epoch.
+# TYPE process_start_time_seconds gauge
+process_start_time_seconds{application="ms-order",} 1.77823330229E9
+# HELP hcr_saga_duration_ms_seconds Saga end-to-end duration by outcome
+# TYPE hcr_saga_duration_ms_seconds summary
+hcr_saga_duration_ms_seconds_count{application="ms-order",outcome="confirmed",resource_id="concert-003",} 430.0
+hcr_saga_duration_ms_seconds_sum{application="ms-order",outcome="confirmed",resource_id="concert-003",} 15234.362
+# HELP hcr_saga_duration_ms_seconds_max Saga end-to-end duration by outcome
+# TYPE hcr_saga_duration_ms_seconds_max gauge
+hcr_saga_duration_ms_seconds_max{application="ms-order",outcome="confirmed",resource_id="concert-003",} 48.778
+# HELP tomcat_sessions_expired_sessions_total  
+# TYPE tomcat_sessions_expired_sessions_total counter
+tomcat_sessions_expired_sessions_total{application="ms-order",} 0.0

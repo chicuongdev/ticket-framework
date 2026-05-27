@@ -1,0 +1,11 @@
+# ============================================================================
+# Prototype 2 — OPTIMISTIC LOCK (ms-order side)
+# ----------------------------------------------------------------------------
+# Saga: SYNC. Giống P1, nhưng reserve có thể retry vài lần do version conflict.
+# Trả HTTP 201 khi toàn bộ saga thành công; HTTP 409 khi retry vượt giới hạn.
+# ============================================================================
+hcr:
+  inventory:
+    strategy: optimistic-lock
+  saga:
+    mode: sync

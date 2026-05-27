@@ -28,13 +28,14 @@ import java.util.concurrent.TimeUnit;
 /**
  * Safety net của framework — chạy ngầm định kỳ để phát hiện và sửa 5 loại inconsistency.
  *
- * <h3>5 case được xử lý:</h3>
+ * <h3>6 case được xử lý:</h3>
  * <ol>
  *   <li><b>STALE_PENDING</b> — order PENDING quá lâu (payment gateway không phản hồi)</li>
  *   <li><b>LATE_PAYMENT_SUCCESS</b> — tiền đã bị trừ nhưng order bị cancel nhầm do timeout</li>
  *   <li><b>INVENTORY_MISMATCH</b> — Redis available ≠ DB (P3 only, sau Redis crash)</li>
  *   <li><b>UNPERSISTED_RESERVATION</b> — order CONFIRMED nhưng DB inventory chưa cập nhật</li>
  *   <li><b>DUPLICATE_ORDER</b> — 2+ order cùng idempotencyKey</li>
+ *   <li><b>ORPHAN_CANCELLED</b> — order CANCELLED/EXPIRED nhưng inventory chưa release</li>
  * </ol>
  *
  * <h3>Framework tự làm:</h3>
@@ -50,13 +51,16 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>{@link #findStalePendingOrders(int)} — query DB lấy order PENDING quá lâu</li>
  *   <li>{@link #getPaymentTransactionId(AbstractOrder)} — lấy transactionId từ order</li>
- *   <li>{@link #handleTimeout(AbstractOrder)} — xử lý khi gateway không có kết quả</li>
+ *   <li>{@link #handleTimeout(AbstractOrder)} — xử lý khi gateway xác nhận payment FAILED</li>
+ *   <li>{@link #handleUnresolvedPayment(AbstractOrder, PaymentVerificationResult)} — xử lý khi payment chưa ngã ngũ (UNKNOWN/TIMEOUT)</li>
  *   <li>{@link #handleLatePaymentSuccess(AbstractOrder, PaymentResult)} — xử lý khi tìm thấy payment muộn</li>
  *   <li>{@link #handleInventoryMismatch(String, long, long)} — xử lý inventory lệch</li>
  *   <li>{@link #findUnpersistedReservations()} — tìm reservation chưa persist</li>
  *   <li>{@link #handleUnpersistedReservation(AbstractOrder)} — fix reservation chưa persist</li>
  *   <li>{@link #findDuplicateOrders()} — tìm duplicate order</li>
  *   <li>{@link #handleDuplicateOrders(List)} — xử lý duplicate</li>
+ *   <li>{@link #findOrphanCancelled()} — tìm CANCELLED/EXPIRED có inventory chưa release</li>
+ *   <li>{@link #handleOrphanCancelled(AbstractOrder)} — retry release + đánh dấu</li>
  * </ul>
  *
  * <h3>Developer override để customize:</h3>
@@ -176,6 +180,7 @@ public abstract class AbstractReconciliationService<O extends AbstractOrder> {
             runCase3(acc);
             runCase4(acc);
             runCase5(acc);
+            runCase6(acc);
 
         } catch (Exception e) {
             log.error("[Reconciliation] Unexpected error during cycle: {}", e.getMessage(), e);
@@ -248,20 +253,26 @@ public abstract class AbstractReconciliationService<O extends AbstractOrder> {
                                 "late-payment-success",
                                 "Payment found SUCCESS after timeout, order reconciled",
                                 null));
-                    } else {
-                        // Case 1: Tình huống A — gateway không thành công → cancel
-                        log.info("[Reconciliation] STALE_PENDING timeout: orderId={}, paymentStatus={}",
-                                order.getOrderId(),
-                                verification.getPaymentResult() != null
-                                        ? verification.getPaymentResult().getStatus()
-                                        : "UNVERIFIED");
+                    } else if (verification.isPaymentFailed()) {
+                        // Case 1: Tình huống A — gateway XÁC NHẬN payment FAILED → cancel + release
+                        log.info("[Reconciliation] STALE_PENDING failed: orderId={}", order.getOrderId());
                         handleTimeout(order);
                         acc.fixed(ReconciliationCase.STALE_PENDING);
                         safePublish(new ReconciliationFixedEvent(
                                 order.getResourceId(), order.getOrderId(),
                                 "stale-pending-cancelled",
-                                "Stale pending order cancelled after timeout",
+                                "Stale pending order cancelled — gateway confirmed payment FAILED",
                                 null));
+                    } else {
+                        // Payment CHƯA ngã ngũ (UNKNOWN/TIMEOUT, hoặc không query được gateway).
+                        // Framework KHÔNG tự cancel — uỷ quyền developer quyết định (skip chờ
+                        // cycle sau, alert, hoặc force-cancel sau N lần...). Không tính totalFixed.
+                        log.info("[Reconciliation] Payment chưa ngã ngũ: orderId={}, paymentStatus={}",
+                                order.getOrderId(),
+                                verification.getPaymentResult() != null
+                                        ? verification.getPaymentResult().getStatus()
+                                        : "UNVERIFIED");
+                        handleUnresolvedPayment(order, verification);
                     }
                 } catch (Exception e) {
                     log.error("[Reconciliation] Failed to handle stale order orderId={}: {}",
@@ -356,6 +367,48 @@ public abstract class AbstractReconciliationService<O extends AbstractOrder> {
     }
 
     /**
+     * Case 6: ORPHAN_CANCELLED — order CANCELLED/EXPIRED nhưng inventory chưa release.
+     *
+     * <p>Xảy ra khi saga compensate gọi {@code inventoryStrategy.release()} fail hết
+     * 3 lần retry (StaleObjectStateException, DB blip, deadlock...). Khi đó
+     * {@code inventory_released_at} giữ NULL trong DB → reconciliation phát hiện và retry.
+     *
+     * <p>Đây là safety net cuối — không có Case 6 thì leak là vĩnh viễn.
+     */
+    private void runCase6(Accumulator acc) {
+        try {
+            List<O> orphans = findOrphanCancelled();
+            if (orphans == null || orphans.isEmpty()) {
+                return;
+            }
+
+            acc.scan(orphans.size());
+            log.info("[Reconciliation] Case 6: found {} orphan cancelled orders (inventory leak candidates)",
+                    orphans.size());
+
+            for (O order : orphans) {
+                try {
+                    handleOrphanCancelled(order);
+                    acc.fixed(ReconciliationCase.ORPHAN_CANCELLED);
+                    safePublish(new ReconciliationFixedEvent(
+                            order.getResourceId(), order.getOrderId(),
+                            "orphan-cancelled-released",
+                            "Inventory released for orphan cancelled order",
+                            null));
+                } catch (Exception e) {
+                    log.error("[Reconciliation] Failed to release orphan orderId={}: {}",
+                            order.getOrderId(), e.getMessage(), e);
+                    acc.addError("orphan-cancelled-" + order.getOrderId() + ": " + e.getMessage());
+                }
+            }
+
+        } catch (Exception e) {
+            log.error("[Reconciliation] Error in Case 6: {}", e.getMessage(), e);
+            acc.addError("Case6: " + e.getMessage());
+        }
+    }
+
+    /**
      * Case 5: DUPLICATE_ORDER — tìm và xử lý order trùng idempotencyKey.
      */
     private void runCase5(Accumulator acc) {
@@ -424,11 +477,15 @@ public abstract class AbstractReconciliationService<O extends AbstractOrder> {
     protected abstract String getPaymentTransactionId(O order);
 
     /**
-     * Xử lý khi gateway xác nhận payment KHÔNG thành công (Tình huống A).
+     * Xử lý khi gateway XÁC NHẬN payment thất bại — {@code PaymentStatus.FAILED}.
+     *
+     * <p>Chỉ được gọi khi kết quả FAILED dứt khoát. Trường hợp chưa rõ
+     * (UNKNOWN/TIMEOUT, hoặc không query được gateway) đi qua
+     * {@link #handleUnresolvedPayment} thay vì method này.
      *
      * <p>Action cần làm:
      * <ul>
-     *   <li>Cancel order (set status = CANCELLED, failureReason = PAYMENT_TIMEOUT)</li>
+     *   <li>Cancel order (set status = CANCELLED, failureReason)</li>
      *   <li>Release inventory (inventoryStrategy.release())</li>
      *   <li>Gửi notification cho user</li>
      * </ul>
@@ -436,6 +493,26 @@ public abstract class AbstractReconciliationService<O extends AbstractOrder> {
      * @param order order cần cancel
      */
     protected abstract void handleTimeout(O order);
+
+    /**
+     * Xử lý khi payment CHƯA ngã ngũ — gateway trả UNKNOWN/TIMEOUT, hoặc không
+     * query được gateway ({@code verification.isVerified() == false}).
+     *
+     * <p>Framework cố tình KHÔNG tự cancel ở đây: một payment chỉ đang chậm vẫn
+     * có thể thành công — cancel vội sẽ huỷ oan order. Developer quyết định cách xử lý:
+     * <ul>
+     *   <li><b>Skip</b> — không làm gì, để order nguyên trạng; cycle reconciliation
+     *       sau sẽ verify lại (lựa chọn an toàn mặc định).</li>
+     *   <li><b>Alert</b> — log/notify ops nếu order treo quá lâu.</li>
+     *   <li><b>Force-cancel</b> — sau N cycle vẫn chưa rõ thì mới cancel + release.</li>
+     * </ul>
+     *
+     * <p>Order đi qua đây KHÔNG được tính vào {@code totalFixed} của cycle.
+     *
+     * @param order        order có payment chưa ngã ngũ
+     * @param verification kết quả verify (chứa PaymentResult — có thể null nếu gateway lỗi)
+     */
+    protected abstract void handleUnresolvedPayment(O order, PaymentVerificationResult verification);
 
     /**
      * Xử lý khi tìm thấy payment SUCCESS muộn (Tình huống B).
@@ -516,6 +593,48 @@ public abstract class AbstractReconciliationService<O extends AbstractOrder> {
      * @param duplicates danh sách order cùng idempotencyKey (size &ge; 2)
      */
     protected abstract void handleDuplicateOrders(List<O> duplicates);
+
+    /**
+     * Tìm các order ở trạng thái CANCELLED hoặc EXPIRED nhưng inventory chưa được release
+     * (saga compensate gọi {@code release()} fail).
+     *
+     * <p>Tiêu chí query:
+     * <ul>
+     *   <li>{@code status IN ('CANCELLED', 'EXPIRED')}</li>
+     *   <li>{@code inventory_released_at IS NULL}</li>
+     *   <li>{@code updated_at < now - 1 phút} (grace period — tránh nhặt order vừa cancel)</li>
+     * </ul>
+     *
+     * <p>Ví dụ (JPA):
+     * <pre>{@code
+     * return orderRepository.findOrphanCancelled(Instant.now().minus(1, ChronoUnit.MINUTES));
+     * }</pre>
+     *
+     * @return danh sách orphan. Empty list nếu không có.
+     */
+    protected abstract List<O> findOrphanCancelled();
+
+    /**
+     * Xử lý một orphan cancelled order — retry {@code inventoryStrategy.release()} và
+     * đánh dấu {@code inventoryReleasedAt} khi thành công.
+     *
+     * <p>Nếu release vẫn fail, KHÔNG throw — log warn và để cycle sau retry tiếp.
+     *
+     * <p>Ví dụ:
+     * <pre>{@code
+     * try {
+     *     inventoryStrategy.release(order.getResourceId(),
+     *             "reconcile-orphan-" + order.getOrderId(), order.getQuantity());
+     *     order.setInventoryReleasedAt(Instant.now());
+     *     orderRepository.save(order);
+     * } catch (Exception e) {
+     *     log.error("[Reconcile] Orphan release failed, will retry next cycle", e);
+     * }
+     * }</pre>
+     *
+     * @param order orphan order cần release inventory
+     */
+    protected abstract void handleOrphanCancelled(O order);
 
     // =========================================================================
     // CONFIGURATION — developer override để customize

@@ -1,0 +1,275 @@
+================================================================
+HCR FRAMEWORK — EDGE CASES NOTES
+Cập nhật lần cuối: 01/05/2026
+================================================================
+
+================================================================
+PHẦN 1 — EDGE CASES ĐÃ THẢO LUẬN VÀ THỐNG NHẤT XỬ LÝ
+================================================================
+
+----------------------------------------------------------------
+NHÓM S — SAGA ORCHESTRATION
+----------------------------------------------------------------
+
+[S1] Step thất bại giữa chừng
+- Mô tả: bước N thành công, bước N+1 thất bại
+- Xử lý: Saga thực thi compensating transaction theo thứ tự ngược
+- Đã thống nhất: OK, cần sequence diagram rollback trong Chương 3
+
+[S2] Compensating transaction cũng thất bại
+- Mô tả: payment thất bại, cố compensate inventory nhưng Inventory Service cũng down
+- Xử lý: lưu SagaState với status COMPENSATING_FAILED vào DB,
+  Reconciliation Module xử lý sau khi service phục hồi
+- Lưu ý: cần document rõ trạng thái COMPENSATING_FAILED trong SagaState diagram
+
+[S3] Saga Orchestrator crash giữa chừng
+- Mô tả: JVM crash khi đang thực thi bước 2 của Saga
+- Xử lý: SagaState được persist vào DB sau mỗi bước,
+  khi restart đọc lại SagaState để resume hoặc rollback đúng điểm
+- Lưu ý: cần đảm bảo persist SagaState TRƯỚC khi thực thi step tiếp theo
+
+[S4] Timeout từ một step
+- Mô tả: payment gateway không trả lời trong thời gian quy định
+- Xử lý: mỗi SagaStep có timeoutMs và retryPolicy riêng,
+  vượt quá timeout → trigger compensating transaction
+- Lưu ý: phân biệt timeout (chưa biết kết quả) với failure (biết chắc thất bại)
+  → cần idempotency key khi retry để tránh charge 2 lần
+
+----------------------------------------------------------------
+NHÓM I — INVENTORY MODULE
+----------------------------------------------------------------
+
+[I1] Redis crash sau DECR nhưng trước khi ghi Outbox vào DB
+- Mô tả: Redis DECR thành công (in-memory) nhưng crash trước khi
+  DB transaction (INSERT outbox + UPDATE inventory) được commit
+- Xử lý ĐÚNG:
+  Bước 1: Redis DECR atomic
+  Bước 2: BEGIN DB transaction
+           → INSERT vào hcr_outbox (1 row)
+           → UPDATE inventory trong PostgreSQL
+           COMMIT
+  Bước 3: Poller đọc hcr_outbox → publish broker → DELETE row
+  → Nếu Redis crash sau bước 1 nhưng trước bước 2:
+    DB không có record → Reconciliation phát hiện Redis < DB
+    mà không có in-flight saga → restore Redis về giá trị đúng
+  → Redis AOF chỉ là lớp bảo vệ bổ sung, không phải giải pháp chính
+- Lưu ý: bước 2 là per-event (không phải batch), nhưng là
+  non-contended INSERT thay vì contended UPDATE → khác về bản chất
+
+[I2] Message broker down khi P3 cần publish event
+- Mô tả: sau khi Redis DECR và ghi outbox thành công,
+  poller không publish được vì broker down
+- Xử lý ĐÚNG:
+  → Event đã nằm trong hcr_outbox → không mất
+  → Circuit Breaker trip → từ chối request mới, không để tích tụ
+  → Poller retry publish khi broker phục hồi
+  → DB không bị storm vì poller là single process, tần suất thấp
+- Lưu ý: KHÔNG fallback về DB write trực tiếp khi broker down
+  vì sẽ gây DB overload
+
+[I3] Optimistic Lock retry loop vô tận (P2)
+- Mô tả: high contention → mọi transaction liên tục conflict và retry
+- Xử lý: maxRetries + exponential backoff, trả về lỗi rõ ràng
+  khi vượt ngưỡng thay vì retry vô tận
+- Lưu ý: document rõ P2 không phù hợp với high contention workload
+
+[I4] Tồn kho âm do race condition trong P3 (nếu implement sai)
+- Mô tả: dùng GET rồi DECR riêng lẻ thay vì Lua script atomic
+  → nhiều request pass check stock > 0 đồng thời → oversell
+- Xử lý: bắt buộc dùng EVAL Lua script để check-and-decrement atomic
+- Lưu ý: đây là lỗi implement, không phải edge case runtime —
+  cần enforce trong framework, không để developer tự implement
+
+----------------------------------------------------------------
+NHÓM E — EVENTBUS / IDEMPOTENT CONSUMER
+----------------------------------------------------------------
+
+[E1] Message được deliver nhiều lần (at-least-once)
+- Mô tả: consumer xử lý xong nhưng crash trước khi ACK
+  → broker gửi lại → consumer nhận message lần 2
+- Xử lý: idempotent consumer check event_id trong hcr_processed_events
+  → nếu đã tồn tại → bỏ qua, ACK ngay
+- Quan trọng: UPDATE inventory và INSERT event_id phải trong
+  CÙNG MỘT DB transaction để tránh partial state
+
+[E2] Consumer xử lý thành công nhưng ghi hcr_processed_events thất bại
+- Mô tả: tồn kho đã update nhưng event_id chưa được lưu
+  → lần sau nhận lại message sẽ update lần 2
+- Xử lý: giải quyết tự động bởi [E1] — vì UPDATE và INSERT
+  trong cùng transaction, nếu INSERT fail thì UPDATE cũng rollback
+  → không có partial state
+
+[E3] Message đến sai thứ tự (out-of-order delivery)
+- Mô tả: INVENTORY_RESTORED đến trước INVENTORY_RESERVED
+- Xử lý: dùng sequence_number trong event để phát hiện,
+  buffer event đến sớm và xử lý theo đúng thứ tự
+- Lưu ý: cần đánh giá xem có thực sự cần hay không,
+  tùy thuộc vào message broker được chọn (Kafka partition đảm bảo order)
+
+----------------------------------------------------------------
+NHÓM G — GATEWAY / PROTECTION
+----------------------------------------------------------------
+
+[G1] Duplicate request từ client — đã làm rõ
+- Mô tả ban đầu SAI: idempotency key không chống được double-click
+  vì double-click tạo 2 UUID khác nhau
+- Làm rõ:
+  → Idempotency key chống RETRY TỰ ĐỘNG (same UUID cho cùng 1 ý định)
+  → Double-click là vấn đề UX → frontend disable button sau lần bấm đầu
+  → Nếu user thực sự muốn mua 2 lần → 2 UUID → 2 request hợp lệ
+- Lưu ý: document rõ phạm vi của idempotency key trong framework
+
+[G2] Circuit Breaker trip nhầm (false positive)
+- Mô tả: latency spike nhỏ làm circuit breaker mở không cần thiết
+- Xử lý: cấu hình minimumNumberOfCalls và slidingWindowSize
+  đủ lớn để tránh trip quá nhạy
+- Lưu ý: cần provide default config hợp lý trong AutoConfiguration
+
+----------------------------------------------------------------
+NHÓM R — RECONCILIATION
+----------------------------------------------------------------
+
+[R1] Phân biệt release hợp lệ và lỗi thật — VẪN CÒN MỞ
+- Vấn đề: không thể phân biệt bằng cách chỉ so sánh Redis vs DB
+  vì release hợp lệ cũng làm Redis thay đổi
+- Phương trình Redis = DB - in_flight cũng không đủ vì:
+  → in_flight thay đổi liên tục → race condition khi đọc
+  → release hợp lệ cũng làm phương trình thay đổi
+- Hướng giải quyết đề xuất: dùng Event Log (hcr_inventory_log)
+  với các event: RESERVED | CONFIRMED | RELEASED | RECONCILED
+  → Reconciliation replay log để tính giá trị Redis đúng
+  → So sánh với Redis thực tế → nếu khác mới là lỗi thật
+  → Release hợp lệ có event RELEASED trong log → không bị nhầm là lỗi
+- Hạn chế: log lớn theo thời gian → cần periodic snapshot
+- STATUS: CẦN THẢO LUẬN THÊM trước khi implement
+
+[R2] Reconciliation chạy đồng thời với giao dịch đang xử lý
+- Mô tả: Reconciliation đang sửa Redis trong khi
+  một request đang DECR Redis cùng lúc
+- Xử lý: dùng distributed lock khi Reconciliation chạy
+- Lưu ý: lock scope cần đủ nhỏ để không block toàn bộ traffic,
+  chỉ lock per-resource (per product_id), không phải global lock
+
+================================================================
+PHẦN 2 — EDGE CASES TIỀM ẨN CHƯA THẢO LUẬN
+================================================================
+
+----------------------------------------------------------------
+NHÓM SA — SAGA (bổ sung)
+----------------------------------------------------------------
+
+[SA1] Saga chạy quá lâu, order bị stale
+- Mô tả: Saga bắt đầu lúc còn vé, nhưng chạy quá lâu
+  đến khi step cuối thì điều kiện đã thay đổi
+- Câu hỏi: có nên có Saga-level timeout không?
+  Nếu có, ai trigger rollback khi orchestrator đang chờ?
+
+[SA2] Nhiều Saga đồng thời cùng compensate một resource
+- Mô tả: 100 Saga cùng thất bại và cùng cố restore inventory
+  → 100 compensating transaction cùng lúc → DB storm
+- Câu hỏi: có cần rate limit compensating transaction không?
+
+[SA3] Compensating transaction không thể undo hoàn toàn
+- Mô tả: ví dụ đã gửi email xác nhận cho user,
+  nhưng sau đó Saga cần rollback — không thể "unsend" email
+- Câu hỏi: HCR có cần hỗ trợ "best-effort compensation" không?
+
+----------------------------------------------------------------
+NHÓM IA — INVENTORY (bổ sung)
+----------------------------------------------------------------
+
+[IA1] Tồn kho Redis bị evict do memory pressure
+- Mô tả: Redis hết RAM, evict key tồn kho
+  → key biến mất → mọi check đều thấy stock = null
+- Câu hỏi: xử lý null ra sao — treat as 0 hay reload từ DB?
+  Nếu reload → DB load spike
+
+[IA2] Split-brain trong Redis Cluster
+- Mô tả: network partition chia Redis cluster thành 2 nhóm,
+  cả hai đều nhận write → tồn kho bị DECR 2 lần cho cùng 1 slot
+- Câu hỏi: P3 có đảm bảo được trong Redis Cluster không?
+  Hay chỉ safe với single Redis instance / Redis Sentinel?
+
+[IA3] Tồn kho = 0 nhưng vẫn có request đến
+- Mô tả: sau khi hết vé, hàng nghìn request vẫn đến
+  → mỗi request đều phải check Redis → vẫn tốn resource
+- Câu hỏi: có nên cache trạng thái "sold out" riêng không?
+  Và invalidate cache này khi có release/cancellation?
+
+----------------------------------------------------------------
+NHÓM EA — EVENTBUS (bổ sung)
+----------------------------------------------------------------
+
+[EA1] hcr_processed_events table phình to
+- Mô tả: bảng lưu event_id đã xử lý sẽ tăng vô hạn
+- Câu hỏi: cần cleanup strategy — TTL bao lâu là an toàn?
+  Nếu cleanup quá sớm, duplicate event cũ có thể bị xử lý lại
+
+[EA2] Poison message — message không thể xử lý được
+- Mô tả: message malformed hoặc gây exception mỗi lần xử lý
+  → broker retry vô tận → consumer bị block
+- Câu hỏi: có cần Dead Letter Queue không?
+  Ai monitor và xử lý DLQ?
+
+----------------------------------------------------------------
+NHÓM RA — RECONCILIATION (bổ sung)
+----------------------------------------------------------------
+
+[RA1] Event log quá lớn — snapshot strategy
+- Mô tả: nếu dùng Event Log cho Reconciliation,
+  log sẽ tăng vô hạn theo thời gian
+- Câu hỏi: snapshot sau bao nhiêu event? Snapshot có atomic không?
+  Nếu crash giữa chừng snapshot thì sao?
+
+[RA2] Reconciliation phát hiện lỗi nhưng không thể tự sửa
+- Mô tả: phát hiện bất đồng bộ nhưng không chắc cách sửa đúng
+  (ví dụ cả Redis và DB đều có vẻ sai)
+- Câu hỏi: Reconciliation có nên tự động sửa hay
+  chỉ alert và để human intervene?
+
+----------------------------------------------------------------
+NHÓM GA — GATEWAY (bổ sung)
+----------------------------------------------------------------
+
+[GA1] Rate limit quá chặt — legitimate user bị chặn
+- Mô tả: user hợp lệ bị chặn vì IP bị shared với nhiều user khác
+  (ví dụ cùng corporate NAT)
+- Câu hỏi: rate limit theo IP hay theo user ID?
+  Nếu theo user ID thì cần auth trước rate limit
+
+[GA2] Idempotency key hết hạn
+- Mô tả: client retry sau thời gian dài,
+  idempotency key đã bị cleanup → request được xử lý lại
+- Câu hỏi: TTL của idempotency key bao lâu là phù hợp?
+  Có cần thông báo cho client khi key hết hạn không?
+
+================================================================
+PHẦN 3 — CÁC QUYẾT ĐỊNH THIẾT KẾ CÒN PENDING
+================================================================
+
+[P1] Reconciliation Module — cần thảo luận thêm
+- Cơ chế phân biệt release hợp lệ vs lỗi thật [R1]
+- Event Log vs snapshot strategy [RA1]
+- Auto-fix vs alert-only [RA2]
+
+[P2] P3 Strategy trong Redis Cluster
+- Đảm bảo atomicity trong môi trường cluster [IA2]
+- Cần xác định rõ: P3 chỉ support single Redis instance
+  hay cả Cluster?
+
+[P3] Dead Letter Queue
+- Có đưa vào scope của framework không?
+- Nếu có: ai chịu trách nhiệm monitor?
+
+[P4] Saga-level timeout
+- Có cần không?
+- Nếu có: integrate với module nào để trigger?
+
+================================================================
+GHI CHÚ
+================================================================
+- Các edge case STATUS "CẦN THẢO LUẬN THÊM" phải được
+  giải quyết trước khi viết phần tương ứng trong Chương 3
+- Các edge case "TIỀM ẨN" có thể đưa vào Chương 6
+  (Hướng phát triển tương lai) nếu không nằm trong scope đồ án
+================================================================

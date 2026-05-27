@@ -366,6 +366,14 @@ public abstract class AbstractSagaOrchestrator<
         O order = context.getOrder();
         onCancelling(order);
 
+        // Neu reserve KHONG hoan thanh (vd: insufficient inventory, validation fail truoc khi reserve)
+        // → khong co inventory de release → danh dau "khong phai orphan" ngay tu dau.
+        // Tranh Case 6 reconciliation nham order loai nay la orphan va release thua → available > total.
+        if (!context.getCompletedSteps().contains("reservation")
+                && order.getInventoryReleasedAt() == null) {
+            order.setInventoryReleasedAt(Instant.now());
+        }
+
         // Transition qua COMPENSATING neu dang RESERVED
         if (order.getStatus() == OrderStatus.RESERVED) {
             OrderAccessor.transitionTo(order, OrderStatus.COMPENSATING);
@@ -405,6 +413,9 @@ public abstract class AbstractSagaOrchestrator<
         if (order.getStatus() == OrderStatus.RESERVED) {
             context.markStepCompleted("reservation");
             compensate(context);
+        } else if (order.getInventoryReleasedAt() == null) {
+            // Order chua tung RESERVED → khong co inventory de release → danh dau "khong phai orphan".
+            order.setInventoryReleasedAt(Instant.now());
         }
         OrderAccessor.transitionTo(order, OrderStatus.EXPIRED);
         OrderAccessor.markFailedWith(order, FailureReason.RESERVATION_EXPIRED);

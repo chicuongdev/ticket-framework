@@ -72,23 +72,18 @@ classDiagram
     }
 
     class OrderReconciler {
-        -EntityManager db
-        -SagaStateRepository sagaRepo
         -PaymentGateway gateway
-        +detectDrift() — find expired/stuck orders
-        +applyFix(case)
+        +verify(order, txId) PaymentVerificationResult
+        —— call gateway.queryStatus() → HTTP sang ms-payment
     }
 
     class ReconciliationCase {
         <<enumeration>>
-        REDIS_HIGHER_THAN_DB
-        DB_HIGHER_THAN_REDIS
-        REDIS_KEY_MISSING
-        ORDER_EXPIRED_NOT_RELEASED
-        ORDER_PENDING_NO_SAGA
-        PAYMENT_UNKNOWN_NEEDS_VERIFY
-        DUPLICATE_RESERVATION
-        ORPHAN_RESERVATION
+        STALE_PENDING
+        LATE_PAYMENT_SUCCESS
+        INVENTORY_MISMATCH
+        UNPERSISTED_RESERVATION
+        DUPLICATE_ORDER
     }
 
     class ReconciliationResult {
@@ -108,9 +103,21 @@ classDiagram
     }
 
     class PaymentVerificationResult {
-        +String transactionId
-        +PaymentStatus actualStatus
-        +Decision decision
+        +PaymentResult paymentResult
+        +Instant verifiedAt
+        +boolean isPaymentSuccess()
+        +boolean isPaymentFailed()
+        +boolean isPaymentUnresolvable()
+    }
+
+    class AbstractReconciliationServiceHooks {
+        <<abstract methods>>
+        #handleTimeout(O order)
+        #handleLatePaymentSuccess(O, PaymentResult)
+        #handleUnresolvedPayment(O, PaymentVerificationResult)
+        #handleInventoryMismatch(resourceId, redis, db)
+        #handleUnpersistedReservation(O)
+        #handleDuplicateOrders(List~O~)
     }
 
     class ReconciliationMetrics {
@@ -154,15 +161,25 @@ classDiagram
 
 ## 6. Policy fix
 
-| Case | Source of truth | Fix |
-|------|----------------|-----|
-| Redis_avail > DB_avail | Redis (đang serve traffic) | UPDATE DB available = Redis |
-| DB_avail > Redis_avail (lệch nhỏ) | Redis | UPDATE DB available = Redis (slot đã reserved nhưng event chưa flush) |
-| DB_avail >> Redis_avail (lệch > threshold) | **Manual** | Throw `ReconciliationException`, alert ops |
-| Redis key missing | DB | Re-seed Redis từ DB available |
-| Order expired không release | — | Transition CANCELLED + `inventory.release()` |
-| Order PENDING không saga state | DB | Cancel + cleanup |
-| Payment UNKNOWN | Gateway | `verifyPayment()` → SUCCEED → confirm; FAIL → compensate |
+### 6.1. Case 1+2 — STALE_PENDING / LATE_PAYMENT_SUCCESS (3 nhánh)
+
+Reconciliation **gọi `paymentGateway.queryStatus()`** để hỏi cổng thanh toán (qua HTTP sang ms-payment), **KHÔNG đọc DB** — vì DB chỉ là audit log, cổng thanh toán mới là source of truth cho `actualStatus`.
+
+| `PaymentVerificationResult` | Hook gọi | Hành vi |
+|---|---|---|
+| `isPaymentSuccess()` (Case 2 LATE_PAYMENT_SUCCESS) | `handleLatePaymentSuccess(order, result)` | Tiền đã trừ — order `RESERVED` → `CONFIRMED`. **KHÔNG release inventory** |
+| `isPaymentFailed()` (Case 1 STALE_PENDING) | `handleTimeout(order)` | Cổng xác nhận thất bại — `release()` trả vé + order → `CANCELLED` |
+| `isPaymentUnresolvable()` (UNKNOWN/TIMEOUT/không hỏi được gateway) | `handleUnresolvedPayment(order, verification)` | **CHỈ log — KHÔNG cancel.** Giữ order `RESERVED`, cycle reconciliation sau verify lại |
+
+> **Cải tiến framework so với phiên bản trước:** `runCase1And2` cũ chỉ có 2 nhánh (SUCCESS → confirm, *mọi nhánh khác* → cancel) → huỷ oan order mà payment chỉ đang chậm. Nay có 3 nhánh, nhánh thứ 3 là **abstract hook** (`handleUnresolvedPayment`) — product tự quyết logic: skip, alert, hay force-cancel sau N cycle.
+
+### 6.2. Case 3/4/5 — inventory + duplicate
+
+| Case | Áp dụng | Fix |
+|------|---------|-----|
+| **INVENTORY_MISMATCH** (Case 3) | P3 only | So sánh Redis vs DB `available`; lệch > threshold → alert hoặc auto-fix theo policy `inventory-mismatch.direction` |
+| **UNPERSISTED_RESERVATION** (Case 4) | P3 only | Order CONFIRMED nhưng DB inventory chưa giảm → re-publish `ResourceReservedEvent` với cùng `eventId` (consumer dedup, không double-decrement) |
+| **DUPLICATE_ORDER** (Case 5) | All | Group by `idempotencyKey`. Giữ order ưu tiên cao nhất (CONFIRMED > RESERVED > PENDING), cancel + refund phần còn lại |
 
 ---
 

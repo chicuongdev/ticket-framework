@@ -88,6 +88,23 @@ public abstract class AbstractOrder {
     @Column(name = "expires_at")
     private Instant expiresAt;
 
+    /**
+     * Thời điểm inventory được release thành công trong compensate flow.
+     *
+     * <p><b>null</b>: order chưa từng cần release HOẶC release đã fail (orphan — cần
+     * Reconciliation Case 6 nhặt rác).
+     * <br><b>!null</b>: release đã thành công, inventory đã được trả về kho.
+     *
+     * <p>Saga compensation set field này sau khi {@code inventoryStrategy.release()}
+     * thành công. Nếu release fail (Hibernate StaleObjectStateException, DB timeout, deadlock),
+     * field giữ null → Reconciliation scan Case 6 (ORPHAN_CANCELLED) sẽ retry release
+     * cho đến khi success.
+     *
+     * <p>Đây là cơ chế "explicit accounting" thay cho việc tin tưởng release luôn thành công.
+     */
+    @Column(name = "inventory_released_at")
+    private Instant inventoryReleasedAt;
+
     protected AbstractOrder(String orderId, String resourceId, String requesterId,
                             int quantity, String idempotencyKey) {
         this.orderId = orderId;

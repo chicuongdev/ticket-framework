@@ -334,6 +334,15 @@ curl -X POST http://localhost:8081/orders ^
 curl http://localhost:8081/orders/<orderId>
 ```
 
+Hoặc gõ liền 1 dòng (không dùng `^` xuống dòng — copy-paste tiện hơn):
+```bat
+curl.exe -X POST http://localhost:8081/orders -H "Content-Type: application/json" -d "{\"resourceId\":\"concert-001\",\"requesterId\":\"user-001\",\"quantity\":1,\"idempotencyKey\":\"smoke-001\"}"
+
+curl.exe http://localhost:8081/orders/<orderId>
+```
+
+> ⚠️ Trong CMD, **PHẢI dùng `"..."`** (double quote bao ngoài) và escape `\"` bên trong. KHÔNG dùng `'...'` — CMD coi `'` là ký tự literal, body sẽ bắt đầu bằng `'` → Spring trả HTTP 400 Bad Request.
+
 **Windows PowerShell — cách 1: dùng `curl.exe` (binary built-in của Win10/11)**
 
 > ⚠️ Trong PowerShell, `curl` (không có `.exe`) là **alias của `Invoke-WebRequest`** — cmdlet này có `-H` = `-Headers` đòi Dictionary, không phải String. Gõ `curl -H "..."` sẽ lỗi `Cannot convert ... to System.Collections.IDictionary`. Phải gọi rõ `curl.exe` để dùng curl thật, hoặc dùng cách 2.
@@ -405,15 +414,14 @@ k6 run load-tests/k6/sustained.js
 **Invariant zero-oversell ĐÚNG (verify SAU test):**
 
 1. **DB invariant:** `CONFIRMED + RESERVED ≤ 500`
-   ```bash
-   docker exec hcr-postgres psql -U hcr -d order_db -c \
-     "SELECT status, COUNT(*) FROM ticket_orders WHERE resource_id='concert-003' GROUP BY status;"
+   ```bat
+   docker exec hcr-postgres psql -U hcr -d order_db -c "SELECT status, COUNT(*) FROM ticket_orders WHERE resource_id='concert-003' GROUP BY status;"
    ```
 
 2. **Redis invariant:** `CONFIRMED + Redis_available = total = 500`
-   ```bash
+   ```bat
    docker exec hcr-redis redis-cli GET hcr:inventory:concert-003
-   # Cộng với CONFIRMED count phải = 500
+   :: Cộng với CONFIRMED count phải = 500
    ```
 
 `burst.js` đã được cấu hình:
@@ -424,30 +432,134 @@ k6 run load-tests/k6/sustained.js
 
 **LUÔN dùng đúng quy trình dưới đây**, KHÔNG bao giờ `redis-cli SET hcr:inventory:*` thủ công (sẽ phá guard của `release.lua` vì thiếu key `hcr:inventory:total:*`).
 
-```bash
-# 1. Wipe Redis (xoá tất cả inventory keys, saga state, idempotency claims)
+```bat
+:: 1. Wipe Redis (xoá tất cả inventory keys, saga state, idempotency claims)
 docker exec hcr-redis redis-cli FLUSHALL
 
-# 2. Wipe orders + payment audit trong cả 3 DB
-docker exec hcr-postgres psql -U hcr -d order_db     -c "DELETE FROM ticket_orders;"
-docker exec hcr-postgres psql -U hcr -d payment_db   -c "DELETE FROM payment_attempts;"
+:: 2. Wipe orders + payment audit trong cả 3 DB
+docker exec hcr-postgres psql -U hcr -d order_db -c "DELETE FROM ticket_orders;"
+docker exec hcr-postgres psql -U hcr -d payment_db -c "DELETE FROM payment_attempts;"
 docker exec hcr-postgres psql -U hcr -d inventory_db -c "DELETE FROM hcr_processed_events;"
 
-# 3. Reset available_quantity về full trong inventory_db
-#    (do persistence consumer đã decrement available qua các test trước)
-docker exec hcr-postgres psql -U hcr -d inventory_db -c \
-  "UPDATE concert_tickets SET available_quantity = total_quantity, version = version + 1;"
+:: 3. Reset available_quantity về full trong inventory_db
+::    (do persistence consumer đã decrement available qua các test trước)
+docker exec hcr-postgres psql -U hcr -d inventory_db -c "UPDATE concert_tickets SET available_quantity = total_quantity, version = version + 1;"
 
-# 4. Restart ms-inventory để RedisSeeder warm Redis lại từ Postgres
-#    (Ctrl+C terminal đang chạy ms-inventory, rồi chạy lại jar)
+:: 4. Restart ms-inventory để RedisSeeder warm Redis lại từ Postgres
+::    (Ctrl+C terminal đang chạy ms-inventory, rồi chạy lại jar)
 java -jar ms-inventory/target/ms-inventory-1.0.0-SNAPSHOT.jar
 
-# 5. Verify Redis state TRƯỚC khi load test
-docker exec hcr-redis redis-cli GET "hcr:inventory:concert-003"        # → 500
-docker exec hcr-redis redis-cli GET "hcr:inventory:total:concert-003"  # → 500
+:: 5. Verify Redis state TRƯỚC khi load test
+docker exec hcr-redis redis-cli GET "hcr:inventory:concert-003"
+docker exec hcr-redis redis-cli GET "hcr:inventory:total:concert-003"
+:: → cả 2 phải trả về 500
 ```
 
 `RedisSeeder` là **idempotent** — chỉ initialize key chưa tồn tại. Nếu sau FLUSHALL bạn restart ms-inventory mà không cần wipe gì khác thì Seeder sẽ tự seed lại từ DB (nhưng vẫn nên TRUNCATE order tables để bắt đầu sạch).
+
+---
+
+### 8.9 Performance tuning đã áp dụng
+
+Quá trình tune được tài liệu hoá chi tiết trong [`docs/tuning-journal.md`](docs/tuning-journal.md). Mỗi bước = 1 thay đổi config + đo lại bằng `burst.js`. Dưới đây là tóm tắt 3 bước có tác động.
+
+#### Step 0.5 — Hikari pool + Tomcat threads
+
+`ms-order/src/main/resources/application.yml`:
+
+```yaml
+server:
+  tomcat:
+    threads:
+      max: 400              # default 200
+      min-spare: 50
+    accept-count: 500       # default 100
+    max-connections: 4000
+
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 50         # default 10
+      minimum-idle: 10
+      connection-timeout: 5000
+      leak-detection-threshold: 30000
+```
+
+Loại bỏ 5xx/timeout do connection refused ở socket layer khi spike vượt thread/pool default.
+
+#### Step 2 — Cache concert catalog in-memory
+
+Profile bằng Micrometer timer cho thấy `catalogRepository.findById()` mất **avg 1 270ms / max 4.7s** dưới spike — ~90% tổng latency của path 202. Catalog là dữ liệu read-only, load 1 lần lúc startup vào `ConcurrentHashMap`:
+
+```java
+// hcr-product/ms-order/.../service/ConcertTicketCatalog.java
+@Component
+public class ConcertTicketCatalog {
+    private final Map<String, ConcertTicket> cache = new ConcurrentHashMap<>();
+    @PostConstruct void warmUp() { repository.findAll().forEach(t -> cache.put(t.getResourceId(), t)); }
+    public Optional<ConcertTicket> findById(String id) { return Optional.ofNullable(cache.get(id)); }
+}
+```
+
+Lookup giảm 1 270ms → **0.002ms** (~700 000×). Path 202 avg: 476ms → 108ms.
+
+#### Step 2b — Lettuce Redis connection pool
+
+Sau Step 2, Redis trở thành bottleneck mới: `idempotency_claim` avg 114ms (Lettuce default = 1 shared multiplexed connection). Bật pool:
+
+```yaml
+# pom.xml
+<dependency><groupId>org.apache.commons</groupId><artifactId>commons-pool2</artifactId></dependency>
+
+# application.yml
+spring.data.redis:
+  timeout: 5000ms              # default Lettuce 60s — pile thread risk
+  connect-timeout: 2000ms
+  lettuce:
+    pool:
+      enabled: true
+      max-active: 64
+      max-idle: 20
+      min-idle: 8
+      max-wait: 2000ms
+```
+
+`idempotency_claim` avg 114ms → 30.5ms (p95 = 58.7ms). Path 202 max 1.71s → **0.377s**.
+
+#### Benchmark trước / sau tune (`burst.js`, peak 1000 RPS, 40s)
+
+| Metric | Default | +Step 0.5 (Hikari+Tomcat) | +Step 2 (Catalog cache) | **+Step 2b (Lettuce pool)** |
+|--------|---------|---------------------------|-------------------------|-----------------------------|
+| Total requests | 10 584 | 10 869 | 14 976 | 11 135 |
+| 202 Accepted | 514 | 501 | 547 | 509 |
+| 422 Out-of-stock | 4 778 | 10 368 | 14 429 | 10 626 |
+| **Real errors** | **5 292 (~50%)** | 0 | 0 | **0** |
+| `http_req_failed` | ❌ FAIL | ✅ PASS | ✅ PASS | ✅ PASS |
+| `errors` custom | ❌ FAIL | ✅ PASS | ✅ PASS | ✅ PASS |
+| **`http_req_duration{status:202}` p95** | ❌ FAIL | ❌ FAIL (timeouts) | ❌ FAIL (latency) | **✅ PASS** |
+| Path 202 avg latency | timeout | ~timeout | 108 ms | **98.8 ms** |
+| Path 202 max latency | timeout | ~timeout | 1.71 s | **0.377 s** |
+| Idempotency claim avg | — | — | 114 ms | **30.5 ms** |
+| Catalog lookup avg | — | — | — | **0.001 ms** |
+| Zero-oversell invariant | ✅ | ✅ | ✅ | ✅ |
+| Throughput hữu ích | ~207 RPS | ~267 RPS | ~373 RPS | ~278 RPS |
+
+> **Note throughput**: Step 2 đạt ~373 RPS hữu ích cao nhất vì hot path không có Redis pool overhead. Step 2b giảm về ~278 RPS nhưng đổi lại tail tighter (max 1.71s → 0.377s) và **đạt threshold p95** — tradeoff đáng giá cho SLA.
+
+**Kết luận**: 3 bước tuning theo hướng đo-trước-tune-sau đã đưa hệ thống từ 50% real errors về **0 errors + tất cả threshold k6 PASS**, throughput tăng ~30%, tail latency giảm 4.5×. Framework giữ correctness tuyệt đối (zero-oversell verified mọi bước).
+
+#### Tại sao default Spring Boot không đủ?
+
+| Thông số | Default | Cần cho 1000 RPS spike |
+|----------|---------|------------------------|
+| Hikari max pool | 10 | 50 |
+| Tomcat threads max | 200 | 400 |
+| Tomcat accept-count | 100 | 500 |
+| Lettuce pool | 1 shared connection (multiplex) | 64 dedicated connections |
+| Catalog access | DB hit per request | In-memory HashMap (read-only data) |
+| Lettuce timeout | 60s | 5s (fail-fast, tránh OOM thread pile-up) |
+
+Mỗi cài đặt default tốt cho dev/low-load nhưng dưới spike trở thành bottleneck. Tuning không chỉ là tăng số: **profile trước → xác định bottleneck thật → tune đúng chỗ** mới hiệu quả.
 
 ---
 
@@ -524,6 +636,8 @@ Mới đến project lần đầu, đọc theo trình tự dưới đây sẽ hi
 - **Saga state TTL Redis = 1h** — nếu reconciliation bị down liên tục > 1h, sẽ mất saga state. Trong trường hợp đó: order CONFIRMED nhưng inventory rò rỉ. Mitigation: monitor `hcr_reconciliation_runs_total` không được dừng.
 - **Không có authentication** — mọi request đều được nhận. Production cần thêm gateway auth layer (Spring Cloud Gateway / Kong / nginx).
 - **Không có rate limit** — `hcr.gateway.rate-limiter.enabled: false`. Bật khi cần.
+- **OOS path latency cao** — trên path 422 (out-of-stock), `orchestrator` avg 907ms p95 2.4s do Redis Lua DECR vẫn phải chạy để biết đã hết vé. KHÔNG ảnh hưởng SLA path 202 (đã pass threshold). Optimize được bằng cách early-reject ở Gateway khi gauge `hcr_inventory_available` = 0, hoặc enable rate-limiter (`hcr.gateway.rate-limiter.enabled: true`).
+- **ms-inventory + ms-payment chưa được tune** — dưới spike sustained dài, có thể trở thành bottleneck consumer-side (saga end-to-end avg ~35-45s vì Kafka backlog). Có thể tune sau theo cùng pattern: Hikari pool 30, Lettuce pool 32, `spring.kafka.listener.concurrency: 4`, `max-poll-records: 500`.
 
 ---
 
@@ -533,4 +647,6 @@ Mới đến project lần đầu, đọc theo trình tự dưới đây sẽ hi
 - `../docs/framework_design.md` — thiết kế chi tiết framework
 - `../docs/PROGRESS.md` — log tiến độ + các quyết định thiết kế
 - `load-tests/README.md` — chi tiết k6 scripts
+- [`docs/tuning-journal.md`](docs/tuning-journal.md) — nhật ký tuning performance (4 step + benchmark final)
+- [`docs/deploy-aws-ec2.md`](docs/deploy-aws-ec2.md) — deploy 3 microservice + infra lên AWS EC2
 - Mỗi module framework có `GUIDE.md` riêng — đọc khi cần đi sâu vào logic của module đó
