@@ -34,18 +34,30 @@ import { placeOrder, tagResponse, isAccepted, RESOURCES } from './lib/common.js'
 // Real errors (5xx, connection failed) vẫn được flag.
 http.setResponseCallback(http.expectedStatuses({ min: 200, max: 299 }, 422, 409));
 
+// === Cấu hình qua env (defaults = giá trị đã chạy trong burst_10x_comparison_20260528.md) ===
+const START_RATE   = parseInt(__ENV.START_RATE   || '500');
+const WARM_RATE    = parseInt(__ENV.WARM_RATE    || '2000');
+const PEAK_RATE    = parseInt(__ENV.PEAK_RATE    || '10000');
+const COOL_RATE    = parseInt(__ENV.COOL_RATE    || '500');
+const WARMUP_SEC   = parseInt(__ENV.WARMUP_SEC   || '10');
+const PEAK_SEC     = parseInt(__ENV.PEAK_SEC     || '20');
+const COOLDOWN_SEC = parseInt(__ENV.COOLDOWN_SEC || '10');
+const PRE_VUS      = parseInt(__ENV.PRE_VUS      || '5000');
+const MAX_VUS      = parseInt(__ENV.MAX_VUS      || '15000');
+const RESOURCE     = __ENV.RESOURCE              || RESOURCES.SMALL;
+
 export const options = {
     scenarios: {
         burst: {
             executor: 'ramping-arrival-rate',
-            startRate: 500,
+            startRate: START_RATE,
             timeUnit: '1s',
-            preAllocatedVUs: 5000,
-            maxVUs: 15000,
+            preAllocatedVUs: PRE_VUS,
+            maxVUs: MAX_VUS,
             stages: [
-                { duration: '10s', target: 2000 },   // warm-up
-                { duration: '20s', target: 10000 },  // peak — vé sẽ hết trong window này
-                { duration: '10s', target: 500 },    // cooldown
+                { duration: `${WARMUP_SEC}s`,   target: WARM_RATE },  // warm-up
+                { duration: `${PEAK_SEC}s`,     target: PEAK_RATE },  // peak
+                { duration: `${COOLDOWN_SEC}s`, target: COOL_RATE },  // cooldown
             ],
         },
     },
@@ -66,7 +78,7 @@ const rejectedCounter = new Counter('orders_rejected');
 const errorRate = new Rate('errors');
 
 export default function () {
-    const res = placeOrder(RESOURCES.SMALL, 1, 'burst');
+    const res = placeOrder(RESOURCE, 1, 'burst');
     tagResponse(res);
 
     if (isAccepted(res)) acceptedCounter.add(1);

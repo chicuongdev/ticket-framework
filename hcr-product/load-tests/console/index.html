@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>HCR Test Console</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #1a1f2a; --border: #2d3548; --text: #e6edf3;
+    --muted: #8b949e; --accent: #58a6ff; --ok: #3fb950; --warn: #d29922;
+    --err: #f85149; --code: #161b22;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+  }
+  header {
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 12px 20px; display: flex; align-items: center; gap: 20px;
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  .status-bar { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-left: auto; }
+  .status-pill {
+    padding: 4px 10px; border-radius: 4px; font-size: 12px;
+    background: var(--code); border: 1px solid var(--border);
+  }
+  .status-pill.ok    { border-color: var(--ok);   color: var(--ok); }
+  .status-pill.down  { border-color: var(--err);  color: var(--err); }
+  .status-pill.warn  { border-color: var(--warn); color: var(--warn); }
+  main { padding: 20px; max-width: 1400px; margin: 0 auto; }
+  .grid { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+  section.panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 16px;
+  }
+  section.panel h2 { margin: 0 0 12px; font-size: 14px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; }
+  label { display: block; margin: 8px 0; font-size: 13px; }
+  label > span { display: inline-block; min-width: 130px; color: var(--muted); }
+  input, select {
+    background: var(--code); color: var(--text); border: 1px solid var(--border);
+    padding: 5px 8px; border-radius: 4px; font: inherit; width: 140px;
+  }
+  input[type=number] { width: 100px; }
+  .params { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; }
+  .params.hidden { display: none; }
+  button {
+    background: var(--accent); color: white; border: none; padding: 8px 16px;
+    border-radius: 4px; font: inherit; font-weight: 600; cursor: pointer; margin: 4px 4px 4px 0;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.15); }
+  button:disabled { background: var(--border); cursor: not-allowed; opacity: 0.6; }
+  button.secondary { background: var(--code); color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: var(--err); }
+  button.warn { background: var(--warn); color: #000; }
+  pre {
+    background: var(--code); border: 1px solid var(--border); border-radius: 4px;
+    padding: 12px; overflow-x: auto; white-space: pre-wrap; font-size: 12px;
+    max-height: 500px; overflow-y: auto; margin: 0;
+  }
+  .actions { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0; align-items: center; }
+  .actions .spacer { flex: 1; }
+  .stability { font-size: 12px; color: var(--muted); margin-left: 12px; }
+  .stability.ok { color: var(--ok); }
+  .invariant-box {
+    background: var(--code); border-left: 3px solid var(--accent);
+    padding: 10px 14px; margin: 8px 0; font-family: monospace; font-size: 13px;
+  }
+  .invariant-box.ok  { border-color: var(--ok); }
+  .invariant-box.bad { border-color: var(--err); }
+  .badge { padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+  .badge.ok  { background: var(--ok);   color: #000; }
+  .badge.bad { background: var(--err);  color: white; }
+  .badge.q   { background: var(--warn); color: #000; }
+  .log-line { font-family: monospace; font-size: 12px; }
+  .toast {
+    position: fixed; bottom: 20px; right: 20px; padding: 12px 18px;
+    background: var(--panel); border: 1px solid var(--accent); border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4); z-index: 100;
+    max-width: 400px;
+  }
+  .toast.err { border-color: var(--err); }
+  .toast.ok  { border-color: var(--ok); }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>HCR Test Console</h1>
+  <div class="status-bar">
+    <span class="status-pill" id="pill-prototype">Prototype: ?</span>
+    <span class="status-pill" id="pill-order">ms-order: ?</span>
+    <span class="status-pill" id="pill-inventory">ms-inventory: ?</span>
+    <span class="status-pill" id="pill-payment">ms-payment: ?</span>
+    <span class="status-pill" id="pill-ts">—</span>
+    <span class="stability" id="stability">checking…</span>
+  </div>
+</header>
+
+<main>
+  <div class="grid">
+    <!-- LEFT: config + actions -->
+    <section class="panel">
+      <h2>Test config</h2>
+
+      <label><span>Scenario</span>
+        <select id="scenario">
+          <option value="burst">burst (spike)</option>
+          <option value="sustained">sustained (soak 5m)</option>
+          <option value="oversell-check">oversell-check (smoke)</option>
+        </select>
+      </label>
+
+      <label><span>Resource</span>
+        <select id="resource">
+          <option value="concert-003">concert-003 (500 vé) — burst</option>
+          <option value="concert-002">concert-002 (5000 vé) — smoke</option>
+          <option value="concert-001">concert-001 (10000 vé) — soak</option>
+        </select>
+      </label>
+
+      <fieldset id="params-burst" class="params">
+        <label><span>Start RPS</span><input type="number" id="start_rate" value="500"></label>
+        <label><span>Warm RPS</span><input type="number" id="warm_rate" value="2000"></label>
+        <label><span>Peak RPS</span><input type="number" id="peak_rate" value="10000"></label>
+        <label><span>Cool RPS</span><input type="number" id="cool_rate" value="500"></label>
+        <label><span>Warmup (s)</span><input type="number" id="warmup_sec" value="10"></label>
+        <label><span>Peak (s)</span><input type="number" id="peak_sec" value="20"></label>
+        <label><span>Cooldown (s)</span><input type="number" id="cooldown_sec" value="10"></label>
+        <label><span>Pre VUs</span><input type="number" id="pre_vus" value="5000"></label>
+        <label><span>Max VUs</span><input type="number" id="max_vus" value="15000"></label>
+      </fieldset>
+
+      <fieldset id="params-sustained" class="params hidden">
+        <label><span>VUs</span><input type="number" id="vus" value="2000"></label>
+        <label><span>Duration</span><input type="text" id="duration" value="5m"></label>
+      </fieldset>
+
+      <fieldset id="params-smoke" class="params hidden">
+        <label><span>VUs (smoke)</span><input type="number" id="vus_smoke" value="50"></label>
+        <label><span>Duration</span><input type="text" id="duration_smoke" value="30s"></label>
+      </fieldset>
+
+      <h2 style="margin-top: 20px;">Switch prototype</h2>
+      <label><span>Target</span>
+        <select id="prototype-target">
+          <option value="P1">P1 — Pessimistic (SELECT FOR UPDATE)</option>
+          <option value="P2">P2 — Optimistic (@Version)</option>
+          <option value="P3">P3 — Redis Atomic (Lua)</option>
+        </select>
+      </label>
+
+      <div class="actions">
+        <button id="btn-switch" class="warn" onclick="doSwitch()">Switch Prototype</button>
+        <button id="btn-reset"  class="secondary" onclick="doReset()">Reset All Data</button>
+        <div class="spacer"></div>
+        <button id="btn-run"    onclick="doRun()">▶ Run Test</button>
+        <button id="btn-stop"   class="danger" onclick="doStop()" disabled>■ Stop</button>
+        <button id="btn-verify" class="secondary" onclick="doVerify()">Verify DB</button>
+      </div>
+    </section>
+
+    <!-- RIGHT: invariant + verify -->
+    <section class="panel">
+      <h2>DB Verify (invariant)</h2>
+      <div id="invariant-display">
+        <em style="color: var(--muted)">Chưa verify. Click <b>Verify DB</b> sau test.</em>
+      </div>
+      <pre id="verify-output" style="margin-top: 12px;">—</pre>
+    </section>
+  </div>
+
+  <!-- Test summary (parsed metrics) — bên dưới DB verify -->
+  <section class="panel" style="margin-top: 16px;">
+    <h2>Test summary <span id="summary-info" style="color: var(--muted); font-size: 12px;"></span></h2>
+    <div id="summary-display">
+      <em style="color: var(--muted)">Chưa có summary. Chạy test xong block này sẽ hiện.</em>
+    </div>
+  </section>
+
+  <!-- BOTTOM: test output (full width) -->
+  <section class="panel" style="margin-top: 16px;">
+    <h2>k6 output <span id="run-info" style="color: var(--muted); font-size: 12px;"></span></h2>
+    <pre id="test-output">Chưa chạy test.</pre>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+let currentRunId = null;
+let outputPollInterval = null;
+let consecutiveUpChecks = 0;
+
+// ============================================================================
+// Helpers
+// ============================================================================
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { raw: text }; }
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${data.detail || text.slice(0,200)}`);
+  return data;
+}
+
+function toast(msg, kind = 'ok', timeout = 4000) {
+  const el = document.getElementById('toast');
+  el.className = 'toast ' + kind;
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, timeout);
+}
+
+function setButtonsBusy(busy) {
+  for (const id of ['btn-switch', 'btn-reset', 'btn-run', 'btn-verify']) {
+    document.getElementById(id).disabled = busy;
+  }
+}
+
+// ============================================================================
+// Status polling (every 30s)
+// ============================================================================
+async function pollStatus() {
+  try {
+    const s = await api('GET', '/api/status');
+
+    document.getElementById('pill-prototype').textContent =
+      `Prototype: ${s.active_prototype || '?'}`;
+    document.getElementById('pill-prototype').className =
+      'status-pill ' + (s.active_prototype ? 'ok' : 'warn');
+
+    for (const svc of s.services) {
+      const pill = document.getElementById(`pill-${svc.name.replace('ms-', '')}`);
+      if (pill) {
+        pill.textContent = `${svc.name}: ${svc.status}`;
+        pill.className = 'status-pill ' + (svc.status === 'UP' ? 'ok' : 'down');
+      }
+    }
+
+    document.getElementById('pill-ts').textContent =
+      '⏱ ' + new Date(s.ts * 1000).toLocaleTimeString();
+
+    if (s.all_up) {
+      consecutiveUpChecks++;
+      const stab = document.getElementById('stability');
+      stab.className = 'stability ok';
+      stab.textContent = `✓ stable (${consecutiveUpChecks} check${consecutiveUpChecks > 1 ? 's' : ''})`;
+    } else {
+      consecutiveUpChecks = 0;
+      document.getElementById('stability').className = 'stability';
+      document.getElementById('stability').textContent = '✗ not all UP';
+    }
+  } catch (e) {
+    document.getElementById('stability').textContent = '✗ poll failed: ' + e.message;
+  }
+}
+
+// ============================================================================
+// Scenario UI toggle
+// ============================================================================
+function updateScenarioUI() {
+  const sc = document.getElementById('scenario').value;
+  document.getElementById('params-burst').classList.toggle('hidden', sc !== 'burst');
+  document.getElementById('params-sustained').classList.toggle('hidden', sc !== 'sustained');
+  document.getElementById('params-smoke').classList.toggle('hidden', sc !== 'oversell-check');
+  // Sensible default resource
+  const resSelect = document.getElementById('resource');
+  if      (sc === 'burst')          resSelect.value = 'concert-003';
+  else if (sc === 'sustained')      resSelect.value = 'concert-001';
+  else if (sc === 'oversell-check') resSelect.value = 'concert-002';
+}
+document.getElementById('scenario').addEventListener('change', updateScenarioUI);
+
+// ============================================================================
+// Actions
+// ============================================================================
+async function doSwitch() {
+  const target = document.getElementById('prototype-target').value;
+  if (!confirm(`Switch to ${target}?\n\nQuá trình ~30-60s (JVM restart). Sau khi xong nên Reset Data.`))
+    return;
+  setButtonsBusy(true);
+  toast(`Switching to ${target}…`, 'ok', 60000);
+  try {
+    const r = await api('POST', '/api/switch', { target });
+    toast(`Switched to ${r.prototype} (${r.took_s}s)`, 'ok');
+    await pollStatus();
+  } catch (e) {
+    toast('Switch failed: ' + e.message, 'err', 8000);
+  } finally {
+    setButtonsBusy(false);
+  }
+}
+
+async function doReset() {
+  if (!confirm('Reset DỮ LIỆU cho cả 3 prototype + Redis FLUSHALL?\n\nKhông thể hoàn tác.'))
+    return;
+  setButtonsBusy(true);
+  toast('Resetting all data…', 'ok', 60000);
+  try {
+    const r = await api('POST', '/api/reset');
+    const failed = r.results.filter(x => !x.ok);
+    if (failed.length) {
+      toast(`Reset partial: ${failed.length} step(s) failed`, 'err', 6000);
+    } else {
+      toast(`Reset OK (${r.took_s}s, ${r.results.length} steps)`, 'ok');
+    }
+    document.getElementById('test-output').textContent =
+      r.results.map(x =>
+        `[${x.ok ? 'OK' : 'ERR'}] ${x.step}` + (x.error ? ` — ${x.error}` : '')
+      ).join('\n');
+    await pollStatus();
+  } catch (e) {
+    toast('Reset failed: ' + e.message, 'err', 8000);
+  } finally {
+    setButtonsBusy(false);
+  }
+}
+
+function collectTestParams() {
+  const sc = document.getElementById('scenario').value;
+  const body = {
+    scenario: sc,
+    resource: document.getElementById('resource').value,
+  };
+  if (sc === 'burst') {
+    for (const k of ['start_rate','warm_rate','peak_rate','cool_rate',
+                     'warmup_sec','peak_sec','cooldown_sec','pre_vus','max_vus']) {
+      body[k] = parseInt(document.getElementById(k).value);
+    }
+  } else if (sc === 'sustained') {
+    body.vus = parseInt(document.getElementById('vus').value);
+    body.duration = document.getElementById('duration').value;
+  } else if (sc === 'oversell-check') {
+    body.vus = parseInt(document.getElementById('vus_smoke').value);
+    body.duration = document.getElementById('duration_smoke').value;
+  }
+  return body;
+}
+
+async function doRun() {
+  const body = collectTestParams();
+  setButtonsBusy(true);
+  document.getElementById('btn-stop').disabled = false;
+  document.getElementById('test-output').textContent = `# Starting k6 run…\n# env: ${JSON.stringify(body)}\n`;
+  try {
+    const r = await api('POST', '/api/test/run', body);
+    currentRunId = r.run_id;
+    document.getElementById('run-info').textContent =
+      ` — run ${r.run_id} (${r.scenario}) → ${r.out_file}`;
+    startOutputPoll();
+    toast(`Test started: ${r.run_id}`, 'ok');
+  } catch (e) {
+    toast('Run failed: ' + e.message, 'err', 8000);
+    setButtonsBusy(false);
+    document.getElementById('btn-stop').disabled = true;
+  }
+}
+
+function startOutputPoll() {
+  if (outputPollInterval) clearInterval(outputPollInterval);
+  outputPollInterval = setInterval(async () => {
+    if (!currentRunId) return;
+    try {
+      const r = await api('GET', `/api/test/status/${currentRunId}`);
+      const outEl = document.getElementById('test-output');
+      outEl.textContent = r.output;
+      // Auto-scroll to bottom while running
+      if (r.running) outEl.scrollTop = outEl.scrollHeight;
+      if (r.summary) renderSummary(r.summary, r);
+      if (!r.running) {
+        clearInterval(outputPollInterval);
+        outputPollInterval = null;
+        setButtonsBusy(false);
+        document.getElementById('btn-stop').disabled = true;
+        toast(`Test done (exit=${r.exit_code}, ${r.elapsed_s}s)`,
+              r.exit_code === 0 ? 'ok' : 'err');
+      }
+    } catch (e) {
+      console.warn('poll error', e);
+    }
+  }, 1000);
+}
+
+function renderSummary(s, r) {
+  const target = document.getElementById('summary-display');
+  const total = s.total ?? 0;
+  const accepted = s.accepted ?? 0;
+  const rejected = s.rejected ?? 0;
+  const errors = s.errors ?? 0;
+  const errPct = s.errors_pct ?? null;
+
+  const acceptedPct = total > 0 ? ((accepted / total) * 100).toFixed(1) : '0.0';
+  const rejectedPct = total > 0 ? ((rejected / total) * 100).toFixed(1) : '0.0';
+
+  // Status pill cho error rate: <1% xanh, 1-10% vàng, >10% đỏ
+  let errClass = 'badge ok';
+  if (errPct !== null) {
+    if (errPct >= 10) errClass = 'badge bad';
+    else if (errPct >= 1) errClass = 'badge q';
+  }
+
+  const lat = s.latency || {};
+  const lat201 = s.latency_201 || {};
+  const lat202 = s.latency_202 || {};
+  const fmt = (v) => v === undefined || v === null ? '—' : v;
+
+  document.getElementById('summary-info').textContent =
+    r ? ` — ${r.scenario} · ${r.elapsed_s}s · exit=${r.exit_code ?? 'running'}` : '';
+
+  target.innerHTML = `
+    <div class="invariant-box">
+      <div style="font-weight: 600; margin-bottom: 8px;">${s.title || 'Summary'}</div>
+      <table style="border-spacing: 16px 2px; width: 100%;">
+        <tr>
+          <td>Total</td><td><b>${total.toLocaleString()}</b></td>
+          <td>Accepted (201/202)</td>
+          <td><b style="color: var(--ok)">${accepted.toLocaleString()}</b>
+            <span style="color: var(--muted)">(${acceptedPct}%)</span></td>
+        </tr>
+        <tr>
+          <td>Rejected (422)</td>
+          <td><b style="color: var(--warn)">${rejected.toLocaleString()}</b>
+            <span style="color: var(--muted)">(${rejectedPct}%)</span></td>
+          <td>Real errors</td>
+          <td><b style="color: var(--err)">${errors.toLocaleString()}</b>
+            ${errPct !== null ? `<span class="${errClass}" style="margin-left: 6px;">${errPct}%</span>` : ''}</td>
+        </tr>
+      </table>
+
+      <div style="margin-top: 12px; font-weight: 600; color: var(--muted); font-size: 12px;">LATENCY (all requests)</div>
+      <table style="border-spacing: 16px 2px;">
+        <tr>
+          <td>avg</td><td><b>${fmt(lat.avg)}</b></td>
+          <td>med</td><td><b>${fmt(lat.med)}</b></td>
+          <td>p95</td><td><b>${fmt(lat.p95)}</b></td>
+          <td>p99</td><td><b>${fmt(lat.p99)}</b></td>
+          <td>max</td><td><b>${fmt(lat.max)}</b></td>
+        </tr>
+      </table>
+
+      <div style="margin-top: 8px; font-weight: 600; color: var(--muted); font-size: 12px;">BY STATUS</div>
+      <table style="border-spacing: 16px 2px;">
+        <tr>
+          <td>201 sync (P1/P2)</td>
+          <td>p95: <b>${fmt(lat201.p95)}</b></td>
+          <td>p99: <b>${fmt(lat201.p99)}</b></td>
+        </tr>
+        <tr>
+          <td>202 async (P3)</td>
+          <td>p95: <b>${fmt(lat202.p95)}</b></td>
+          <td>p99: <b>${fmt(lat202.p99)}</b></td>
+        </tr>
+      </table>
+    </div>
+  `;
+}
+
+async function doStop() {
+  if (!currentRunId) return;
+  try {
+    await api('POST', `/api/test/stop/${currentRunId}`);
+    toast('Stop signal sent', 'warn');
+  } catch (e) {
+    toast('Stop failed: ' + e.message, 'err');
+  }
+}
+
+async function doVerify() {
+  const resource = document.getElementById('resource').value;
+  setButtonsBusy(true);
+  try {
+    const r = await api('GET', '/api/verify?resource=' + encodeURIComponent(resource));
+    renderInvariant(r);
+    document.getElementById('verify-output').textContent =
+      JSON.stringify(r.queries, null, 2);
+  } catch (e) {
+    toast('Verify failed: ' + e.message, 'err', 8000);
+  } finally {
+    setButtonsBusy(false);
+  }
+}
+
+function renderInvariant(r) {
+  const inv = r.invariant || {};
+  const target = document.getElementById('invariant-display');
+  const oversell = inv.zero_oversell_ok;
+  const recon = inv.fully_reconciled;
+
+  let cls = 'invariant-box';
+  if (oversell === false) cls += ' bad';
+  else if (oversell === true) cls += ' ok';
+
+  let badge = '';
+  if (oversell === true) badge = `<span class="badge ok">ZERO-OVERSELL OK</span>`;
+  if (oversell === false) badge = `<span class="badge bad">OVERSELL DETECTED</span>`;
+  if (recon === false && oversell === true)
+    badge += ` <span class="badge q">RECONCILE PENDING</span>`;
+  if (recon === true) badge += ` <span class="badge ok">FULLY RECONCILED</span>`;
+
+  const availLabel = r.prototype === 'P3' ? 'redis_available' : 'db_available';
+  target.innerHTML = `
+    <div class="${cls}">
+      <div style="margin-bottom: 6px;">${badge}</div>
+      Prototype: <b>${r.prototype}</b> · Resource: <b>${r.resource}</b>
+      <table style="margin-top: 8px; border-spacing: 8px 2px;">
+        <tr><td>CONFIRMED</td><td><b>${inv.confirmed ?? '?'}</b></td></tr>
+        <tr><td>RESERVED</td> <td><b>${inv.reserved  ?? '?'}</b></td></tr>
+        <tr><td>${availLabel}</td><td><b>${inv[availLabel] ?? '?'}</b></td></tr>
+        <tr><td>= total</td>   <td><b>${inv.confirmed_plus_available ?? '?'}</b>
+          / expected <b>${inv.expected_total ?? '?'}</b></td></tr>
+      </table>
+      <div style="margin-top: 8px; color: var(--muted); font-size: 12px;">
+        Invariant: <code>CONFIRMED + ${availLabel} ≤ total</code> (zero-oversell) /
+        <code>= total</code> (fully reconciled).
+      </div>
+    </div>
+  `;
+}
+
+// ============================================================================
+// Init
+// ============================================================================
+updateScenarioUI();
+pollStatus();
+setInterval(pollStatus, 30000);   // poll every 30s per user spec
+</script>
+
+</body>
+</html>

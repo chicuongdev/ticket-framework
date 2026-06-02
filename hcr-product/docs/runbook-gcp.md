@@ -4,6 +4,8 @@
 > Đối chiếu deploy lần đầu: [`deploy-gcp.md`](deploy-gcp.md).
 > Layout cố định: SSH config `~/.ssh/config` đã setup match `hcr-*`; JAR ở `/opt/hcr/`; env ở `/etc/hcr/env`; systemd unit ở `/etc/systemd/system/hcr-*.service`.
 
+> **👉 Khuyến nghị cho demo thesis: dùng workflow §8 (Console-based testing)** — wrap toàn bộ switch/reset/run/verify vào UI tại `http://localhost:8090/`. Flow A (§1) giữ lại như CLI baseline + debugging.
+
 ---
 
 ## 0. Tổng quan & checkpoint
@@ -589,3 +591,331 @@ docker exec hcr-postgres psql -U hcr -d order_p1_db -c "SELECT (SELECT COUNT(*) 
 ```powershell
 gcloud compute instances stop hcr-app hcr-data hcr-busobs hcr-loadgen --zone=asia-southeast1-a
 ```
+
+---
+
+## 8. Console-based testing (RECOMMENDED cho demo thesis)
+
+> Thay thế Flow A: gói toàn bộ thao tác switch/reset/run/verify vào UI tại `http://localhost:8090/`. Backend `hcr-product/load-tests/console/app.py` (FastAPI) chạy trên VM `hcr-loadgen`. Validate ngày 2026-06-02.
+
+### 8.0. Khác biệt vs Flow A
+
+| | Flow A (CLI) | Section 8 (Console) |
+|---|---|---|
+| Switch prototype | sed `/etc/hcr/env` + sed unit file + restart 3 service thủ công | Click "Switch P2" trên UI |
+| Reset state | TRUNCATE từng DB, FLUSHALL Redis, restart inventory | Click "Reset All Data" |
+| Run test | `k6 run --env ...` trên SSH terminal | Form params + click "Run Test", output stream realtime |
+| Verify | psql query thủ công | Click "Verify DB" → invariant box màu xanh/đỏ |
+| Live status | `systemctl status` mỗi VM | Status bar tự refresh 30s |
+
+### 8.1. Prerequisites — one-time setup (chạy 1 lần duy nhất)
+
+#### 8.1.1. Firewall: mở SSH internal + IAP cho port 8090
+
+```powershell
+# tcp:22 nội VPC (loadgen → app/data SSH cross-VM)
+gcloud compute firewall-rules create hcr-allow-internal-ssh `
+    --network=hcr-vpc --direction=INGRESS --action=ALLOW `
+    --rules=tcp:22 --source-ranges=10.20.0.0/24
+
+# tcp:8090 từ IAP (browser local → loadgen qua IAP tunnel)
+gcloud compute firewall-rules create hcr-allow-iap-console `
+    --network=hcr-vpc --direction=INGRESS --action=ALLOW `
+    --rules=tcp:8090 --source-ranges=35.235.240.0/20
+```
+
+> Lý do: rule gốc `hcr-allow-internal` (deploy-gcp.md §3.2) chỉ mở 8081-8083, 5432, 6379, 9092, 9090, 9411, 3000. KHÔNG có 22 → SSH cross-VM bị timeout. Rule gốc `hcr-allow-iap-ssh` chỉ mở 22 từ IAP.
+
+#### 8.1.2. SSH key: loadgen → hcr-app + hcr-data
+
+OS Login fail vì VM service account thiếu scope (`ACCESS_TOKEN_SCOPE_INSUFFICIENT`). Workaround manual:
+
+```bash
+# Trên loadgen — sinh key
+gcloud compute ssh hcr-loadgen --zone=asia-southeast1-a --tunnel-through-iap
+[ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+cat ~/.ssh/id_ed25519.pub
+# Copy dòng output
+exit
+```
+
+```bash
+# Trên hcr-app — append key
+gcloud compute ssh hcr-app --zone=asia-southeast1-a --tunnel-through-iap
+echo 'ssh-ed25519 AAAA... Admin@hcr-loadgen...' >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+exit
+```
+
+Lặp tương tự cho `hcr-data` (cùng key).
+
+#### 8.1.3. Cài helper script trên hcr-app
+
+```powershell
+# Copy script từ local
+gcloud compute scp hcr-product/load-tests/console/setup-hcr-app.sh `
+    hcr-app:setup-hcr-app.sh --zone=asia-southeast1-a --tunnel-through-iap
+```
+
+```bash
+# SSH hcr-app, chạy setup
+gcloud compute ssh hcr-app --zone=asia-southeast1-a --tunnel-through-iap
+sudo bash ~/setup-hcr-app.sh
+# → Tạo /usr/local/bin/hcr-switch-prototype.sh + sudoers whitelist 3 lệnh (p1/p2/p3)
+exit
+```
+
+#### 8.1.4. Copy console code + k6 scripts lên loadgen
+
+```powershell
+gcloud compute scp --recurse hcr-product/load-tests/console `
+    hcr-loadgen:console --zone=asia-southeast1-a --tunnel-through-iap
+
+gcloud compute ssh hcr-loadgen --zone=asia-southeast1-a --tunnel-through-iap `
+    --command="mkdir -p k6 k6/lib"
+
+gcloud compute scp `
+    hcr-product/load-tests/k6/burst.js `
+    hcr-product/load-tests/k6/sustained.js `
+    hcr-product/load-tests/k6/oversell-check.js `
+    hcr-loadgen:k6/ --zone=asia-southeast1-a --tunnel-through-iap
+
+gcloud compute scp hcr-product/load-tests/k6/lib/common.js `
+    hcr-loadgen:k6/lib/common.js --zone=asia-southeast1-a --tunnel-through-iap
+```
+
+> Nếu `gcloud scp` báo `pscp: unable to open k6/lib: failure` → tạo folder trước bằng `gcloud compute ssh ... --command="mkdir -p k6/lib"`, rồi scp file đơn lẻ thay vì `--recurse`.
+
+#### 8.1.5. Setup Python venv trên loadgen
+
+```bash
+gcloud compute ssh hcr-loadgen --zone=asia-southeast1-a --tunnel-through-iap
+
+# Nếu venv chưa cài
+sudo apt install -y python3.12-venv
+
+cd ~/console
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+mkdir -p outputs
+deactivate
+exit
+```
+
+Layout cuối trên loadgen:
+```
+~/console/.venv/
+~/console/app.py
+~/console/index.html
+~/console/requirements.txt
+~/k6/burst.js
+~/k6/sustained.js
+~/k6/oversell-check.js
+~/k6/lib/common.js
+```
+
+---
+
+### 8.2. Daily run cycle (chạy mỗi session demo)
+
+> **Mỗi lần demo chỉ cần chạy §8.2.** §8.1 đã setup vĩnh viễn (firewall rule, SSH key, helper script, code, venv — tất cả lưu trong VM disk).
+> Mọi lệnh chia rõ "**Local (PowerShell)**" hoặc "**VM (bash)**". Lệnh 1 dòng để paste thẳng, không có line continuation.
+
+#### 8.2.1. Start 4 VM (Local PowerShell)
+
+```powershell
+gcloud compute instances start hcr-app hcr-data hcr-busobs hcr-loadgen --zone=asia-southeast1-a
+```
+
+```powershell
+Start-Sleep -Seconds 60
+```
+
+#### 8.2.2. Start bus containers (SSH hcr-busobs)
+
+```powershell
+gcloud compute ssh hcr-busobs --zone=asia-southeast1-a --tunnel-through-iap
+```
+
+Trong VM:
+
+```
+docker rm -f hcr-kafka hcr-zookeeper hcr-prometheus hcr-grafana hcr-zipkin 2>/dev/null
+```
+
+```
+cd ~/infra && KAFKA_HOST=10.20.0.4 docker compose -f docker-compose.gcp-busobs.yml up -d
+```
+
+```
+sleep 30 && docker ps
+```
+
+```
+exit
+```
+
+#### 8.2.3. Verify Postgres/Redis (SSH hcr-data)
+
+```powershell
+gcloud compute ssh hcr-data --zone=asia-southeast1-a --tunnel-through-iap
+```
+
+```
+docker ps
+```
+
+Nếu thiếu container nào:
+
+```
+docker start hcr-postgres hcr-redis
+```
+
+```
+exit
+```
+
+#### 8.2.4. Verify 3 microservice (SSH hcr-app)
+
+```powershell
+gcloud compute ssh hcr-app --zone=asia-southeast1-a --tunnel-through-iap
+```
+
+```
+curl -s http://localhost:8081/actuator/health | jq .status
+```
+
+```
+curl -s http://localhost:8082/actuator/health | jq .status
+```
+
+```
+curl -s http://localhost:8083/actuator/health | jq .status
+```
+
+Phải trả `"UP"` x3.
+
+```
+exit
+```
+
+> ⚠ Nếu Kafka start SAU ms-order → log đầy `Connection to node -1 (/10.20.0.4:9092) could not be established`. ms-order tự reconnect trong ~10s khi Kafka Up. KHÔNG cần restart service.
+
+#### 8.2.5. Start console (SSH hcr-loadgen)
+
+```powershell
+gcloud compute ssh hcr-loadgen --zone=asia-southeast1-a --tunnel-through-iap
+```
+
+```
+cd ~/console
+```
+
+```
+kill $(cat console.pid) 2>/dev/null
+```
+
+```
+source .venv/bin/activate
+```
+
+```
+nohup env HCR_APP_HOST=10.20.0.2 HCR_DATA_HOST=10.20.0.3 SSH_USER=Admin python app.py > console.log 2>&1 &
+```
+
+```
+echo $! > console.pid
+```
+
+```
+sleep 3
+```
+
+```
+curl -s http://localhost:8090/api/status | jq '.active_prototype, .all_up'
+```
+
+Phải trả `"P1"` (hoặc prototype gần nhất khi tear down) và `true`.
+
+```
+exit
+```
+
+#### 8.2.6. IAP tunnel + mở UI (Local PowerShell window RIÊNG)
+
+```powershell
+gcloud compute start-iap-tunnel hcr-loadgen 8090 --local-host-port=localhost:8090 --zone=asia-southeast1-a
+```
+
+Giữ window này chạy suốt demo. Mở browser:
+
+```
+http://localhost:8090/
+```
+
+Status bar: `Prototype P1 · ms-order UP · ms-inventory UP · ms-payment UP`.
+
+---
+
+### 8.3. Demo flow (mỗi prototype)
+
+Trên UI, tuần tự cho P1, P2, P3:
+
+1. **Switch Prototype** → chọn target P1/P2/P3 → click. Helper SSH vào hcr-app, gọi `/usr/local/bin/hcr-switch-prototype.sh pX` (sed env + unit + restart 3 service). Console poll `/actuator/hcr` đến khi `inventory.configuredStrategy` khớp target (~30s).
+2. **Reset All Data** (~20s). Xóa hết orders cả 3 DB + reset stock + FLUSHALL Redis + restart `ms-inventory` để re-seed Redis (P3).
+3. Chọn **Scenario** (burst / sustained / oversell-check) + **Resource** (concert-001/-002/-003) + tinh chỉnh params nếu cần.
+4. Click **Run Test**. Output stream realtime trong panel dưới.
+5. Sau khi test kết thúc → **Verify DB**. Invariant box hiển thị:
+   - `ZERO-OVERSELL OK`: CONFIRMED ≤ total (không bán quá) — luôn phải xanh
+   - `FULLY RECONCILED`: CONFIRMED + available = total — có thể chưa xanh nếu mới test xong (reconciliation 60s)
+
+Đợi 5-6 phút sau test rồi Verify lại để confirm reconciliation đã release các orphan PENDING.
+
+---
+
+### 8.4. Verify endpoint mappings (kiểm chứng prototype thực sự load)
+
+`/actuator/env` KHÔNG được expose (deploy-gcp.md §application.yml line 86: `include: health, info, prometheus, hcr`). Verify duy nhất qua `/actuator/hcr`:
+
+```bash
+curl -s http://10.20.0.2:8081/actuator/hcr | jq '.inventory.configuredStrategy, .saga.mode'
+```
+
+| Prototype | `configuredStrategy` | `saga.mode` |
+|---|---|---|
+| P1 | `"pessimistic-lock"` | `"sync"` |
+| P2 | `"optimistic-lock"`  | `"sync"` |
+| P3 | `"redis-atomic"`     | `"async"` |
+
+---
+
+### 8.5. Troubleshooting riêng cho console workflow
+
+| Triệu chứng | Nguyên nhân | Fix |
+|---|---|---|
+| `ssh: connect to host 10.20.0.X port 22: Connection timed out` | Thiếu firewall `hcr-allow-internal-ssh` | §8.1.1 |
+| `ssh ... Permission denied` cross-VM | Thiếu authorized_keys trên target VM | §8.1.2 |
+| `gcloud compute start-iap-tunnel ... failed to connect to port 8090` | Console không listen, hoặc thiếu firewall IAP cho 8090 | Check `ps -ef \| grep "python app.py"` + §8.1.1 |
+| UI status `active_prototype: null` | App.py version cũ query `/actuator/env/...` thay vì `/actuator/hcr` | scp app.py mới + restart console |
+| `pscp: unable to open k6/lib: failure` | pscp Windows không tự tạo nested folder | `ssh ... --command="mkdir -p k6/lib"` trước |
+| `Error response from daemon: Conflict. The container name "/hcr-kafka" is already in use` | Container cũ tồn từ session trước | `docker rm -f hcr-kafka hcr-zookeeper ...` trước khi compose up |
+| ms-order log spam `Connection to node -1 (/10.20.0.4:9092) could not be established` | Kafka chưa Up trên hcr-busobs | §8.2.1 — start bus containers; ms-order tự reconnect |
+| Test burst P1 → 100% errors, 0 success | Kafka down (ms-order publish event fail) | §8.2.1 |
+| Test burst P2 → CONFIRMED << 500 | Hikari pool exhaust dưới retry storm (by design — finding thesis) | Đợi reconciliation 5min, verify lại |
+
+---
+
+### 8.6. Tear down (cuối session)
+
+Ctrl-C trong PowerShell tunnel window. Sau đó:
+
+```powershell
+gcloud compute ssh hcr-loadgen --zone=asia-southeast1-a --tunnel-through-iap --command="kill \$(cat ~/console/console.pid) 2>/dev/null; rm -f ~/console/console.pid"
+```
+
+```powershell
+gcloud compute instances stop hcr-app hcr-data hcr-busobs hcr-loadgen --zone=asia-southeast1-a
+```
+
+Lần demo sau: chỉ cần lặp lại §8.2 (~5 phút). §8.1 đã setup vĩnh viễn (state lưu trên disk VM).

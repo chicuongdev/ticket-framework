@@ -16,12 +16,17 @@
 import { Counter } from 'k6/metrics';
 import { placeOrder, tagResponse, isAccepted, RESOURCES } from './lib/common.js';
 
+// === Cấu hình qua env (defaults = soak gốc) ===
+const VUS      = parseInt(__ENV.VUS      || '2000');
+const DURATION = __ENV.DURATION          || '5m';
+const RESOURCE = __ENV.RESOURCE          || RESOURCES.LARGE;
+
 export const options = {
     scenarios: {
         soak: {
             executor: 'constant-vus',
-            vus: 2000,
-            duration: '5m',
+            vus: VUS,
+            duration: DURATION,
         },
     },
     thresholds: {
@@ -37,7 +42,7 @@ const rejected = new Counter('orders_rejected');
 const failed = new Counter('orders_failed');
 
 export default function () {
-    const res = placeOrder(RESOURCES.LARGE, 1, 'soak');
+    const res = placeOrder(RESOURCE, 1, 'soak');
     tagResponse(res);
     if (isAccepted(res)) accepted.add(1);
     else if (res.status === 422) rejected.add(1);

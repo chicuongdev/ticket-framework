@@ -14,9 +14,14 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { BASE_URL, placeOrder, isAccepted, RESOURCES } from './lib/common.js';
 
+// === Cấu hình qua env (defaults = smoke gốc) ===
+const VUS      = parseInt(__ENV.VUS      || '50');
+const DURATION = __ENV.DURATION          || '30s';
+const RESOURCE = __ENV.RESOURCE          || RESOURCES.MEDIUM;
+
 export const options = {
-    vus: 50,
-    duration: '30s',
+    vus: VUS,
+    duration: DURATION,
     thresholds: {
         'checks': ['rate>0.95'],
     },
@@ -24,7 +29,7 @@ export const options = {
 
 export default function () {
     // 1. Place order
-    const placeRes = placeOrder(RESOURCES.MEDIUM, 1, 'smoke');
+    const placeRes = placeOrder(RESOURCE, 1, 'smoke');
     check(placeRes, {
         '[place] status accepted (201/202)': (r) => isAccepted(r),
         '[place] body has orderId': (r) => {
